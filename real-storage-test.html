@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧪 Real Storage Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        .stats {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 Real Storage System Test</h1>
+        <p>Testing IndexedDB dengan chunking system 20MB</p>
+
+        <div class="stats" id="stats">
+            <h3>📊 Storage Statistics</h3>
+            <div id="storageStats">Loading...</div>
+        </div>
+
+        <div id="testResults"></div>
+
+        <h3>🎯 Tests</h3>
+        <button onclick="testDatabaseInit()">Test Database Init</button>
+        <button onclick="testCreateFolder()">Test Create Folder</button>
+        <button onclick="testSmallFile()">Test Small File (< 20MB)</button>
+        <button onclick="testLargeFile()">Test Large File (> 20MB)</button>
+        <button onclick="testFileRetrieval()">Test File Retrieval</button>
+        <button onclick="clearAllData()">Clear All Data</button>
+        <button onclick="updateStats()">Update Stats</button>
+
+        <h3>📤 File Upload Test</h3>
+        <input type="file" id="testFileInput" multiple>
+        <button onclick="testRealFileUpload()">Upload Real Files</button>
+    </div>
+
+    <script>
+        let db;
+        const DB_NAME = 'FileContainerDB';
+        const DB_VERSION = 1;
+        const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB
+
+        function addResult(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            document.getElementById('testResults').appendChild(div);
+            console.log(message);
+        }
+
+        // Initialize IndexedDB
+        async function initDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    resolve(db);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    
+                    if (!db.objectStoreNames.contains('folders')) {
+                        const foldersStore = db.createObjectStore('folders', { keyPath: 'id' });
+                        foldersStore.createIndex('name', 'name', { unique: true });
+                    }
+                    
+                    if (!db.objectStoreNames.contains('files')) {
+                        const filesStore = db.createObjectStore('files', { keyPath: 'id' });
+                        filesStore.createIndex('folder', 'folder', { unique: false });
+                    }
+                    
+                    if (!db.objectStoreNames.contains('chunks')) {
+                        const chunksStore = db.createObjectStore('chunks', { keyPath: 'id' });
+                        chunksStore.createIndex('fileId', 'fileId', { unique: false });
+                    }
+                };
+            });
+        }
+
+        async function testDatabaseInit() {
+            try {
+                await initDatabase();
+                addResult('✅ Database initialized successfully', 'success');
+                await updateStats();
+            } catch (error) {
+                addResult('❌ Database initialization failed: ' + error.message, 'error');
+            }
+        }
+
+        async function testCreateFolder() {
+            try {
+                if (!db) await initDatabase();
+                
+                const folderData = {
+                    id: 'test-folder',
+                    name: 'Test Folder',
+                    password: 'hashedpassword123',
+                    createdAt: new Date().toISOString()
+                };
+                
+                const transaction = db.transaction(['folders'], 'readwrite');
+                await transaction.objectStore('folders').put(folderData);
+                
+                addResult('✅ Test folder created successfully', 'success');
+                await updateStats();
+            } catch (error) {
+                addResult('❌ Folder creation failed: ' + error.message, 'error');
+            }
+        }
+
+        async function testSmallFile() {
+            try {
+                if (!db) await initDatabase();
+                
+                // Generate 1MB test data
+                const testData = 'A'.repeat(1024 * 1024); // 1MB
+                
+                const fileData = {
+                    id: 'small-test-file',
+                    name: 'small-test.txt',
+                    folder: 'test-folder',
+                    size: testData.length,
+                    mimetype: 'text/plain',
+                    uploadDate: new Date().toISOString(),
+                    isChunked: false,
+                    totalChunks: 1,
+                    totalSize: testData.length
+                };
+                
+                // Save file metadata
+                const fileTransaction = db.transaction(['files'], 'readwrite');
+                await fileTransaction.objectStore('files').put(fileData);
+                
+                // Save file content as single chunk
+                const chunkTransaction = db.transaction(['chunks'], 'readwrite');
+                await chunkTransaction.objectStore('chunks').put({
+                    id: 'small-test-file_chunk_0',
+                    fileId: 'small-test-file',
+                    chunkIndex: 0,
+                    data: testData,
+                    size: testData.length
+                });
+                
+                addResult('✅ Small file (1MB) saved successfully', 'success');
+                await updateStats();
+            } catch (error) {
+                addResult('❌ Small file test failed: ' + error.message, 'error');
+            }
+        }
+
+        async function testLargeFile() {
+            try {
+                if (!db) await initDatabase();
+                
+                // Generate 25MB test data (will be chunked)
+                addResult('🔄 Generating 25MB test data...', 'info');
+                const chunkData = 'B'.repeat(CHUNK_SIZE); // 20MB chunk
+                const remainingData = 'C'.repeat(5 * 1024 * 1024); // 5MB chunk
+                const totalSize = CHUNK_SIZE + (5 * 1024 * 1024);
+                
+                const fileData = {
+                    id: 'large-test-file',
+                    name: 'large-test.txt',
+                    folder: 'test-folder',
+                    size: totalSize,
+                    mimetype: 'text/plain',
+                    uploadDate: new Date().toISOString(),
+                    isChunked: true,
+                    totalChunks: 2,
+                    totalSize: totalSize
+                };
+                
+                // Save file metadata
+                const fileTransaction = db.transaction(['files'], 'readwrite');
+                await fileTransaction.objectStore('files').put(fileData);
+                
+                // Save chunks
+                const chunkTransaction = db.transaction(['chunks'], 'readwrite');
+                
+                // First chunk (20MB)
+                await chunkTransaction.objectStore('chunks').put({
+                    id: 'large-test-file_chunk_0',
+                    fileId: 'large-test-file',
+                    chunkIndex: 0,
+                    data: chunkData,
+                    size: chunkData.length
+                });
+                
+                // Second chunk (5MB)
+                await chunkTransaction.objectStore('chunks').put({
+                    id: 'large-test-file_chunk_1',
+                    fileId: 'large-test-file',
+                    chunkIndex: 1,
+                    data: remainingData,
+                    size: remainingData.length
+                });
+                
+                addResult('✅ Large file (25MB) chunked and saved successfully!', 'success');
+                await updateStats();
+            } catch (error) {
+                addResult('❌ Large file test failed: ' + error.message, 'error');
+            }
+        }
+
+        async function testFileRetrieval() {
+            try {
+                if (!db) await initDatabase();
+                
+                // Retrieve large file and reconstruct
+                const fileTransaction = db.transaction(['files'], 'readonly');
+                const file = await new Promise((resolve, reject) => {
+                    const request = fileTransaction.objectStore('files').get('large-test-file');
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                
+                if (!file) {
+                    addResult('❌ File not found', 'error');
+                    return;
+                }
+                
+                // Get all chunks
+                const chunkTransaction = db.transaction(['chunks'], 'readonly');
+                const chunksStore = chunkTransaction.objectStore('chunks');
+                const chunksIndex = chunksStore.index('fileId');
+                
+                const chunks = await new Promise((resolve, reject) => {
+                    const request = chunksIndex.getAll('large-test-file');
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                
+                // Sort and reconstruct
+                chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+                const reconstructedData = chunks.map(chunk => chunk.data).join('');
+                
+                addResult(`✅ File retrieved and reconstructed: ${formatFileSize(reconstructedData.length)} from ${chunks.length} chunks`, 'success');
+                
+                // Verify data integrity
+                const expectedSize = file.totalSize;
+                if (reconstructedData.length === expectedSize) {
+                    addResult('✅ Data integrity verified - file size matches!', 'success');
+                } else {
+                    addResult(`❌ Data integrity failed - expected ${expectedSize}, got ${reconstructedData.length}`, 'error');
+                }
+                
+            } catch (error) {
+                addResult('❌ File retrieval test failed: ' + error.message, 'error');
+            }
+        }
+
+        async function testRealFileUpload() {
+            try {
+                if (!db) await initDatabase();
+                
+                const files = document.getElementById('testFileInput').files;
+                if (files.length === 0) {
+                    addResult('❌ Please select files first', 'error');
+                    return;
+                }
+                
+                for (let file of files) {
+                    addResult(`🔄 Processing ${file.name} (${formatFileSize(file.size)})...`, 'info');
+                    
+                    // Convert to base64
+                    const base64Data = await fileToBase64(file);
+                    
+                    const fileData = {
+                        id: Date.now() + '_' + file.name,
+                        name: file.name,
+                        folder: 'test-folder',
+                        size: file.size,
+                        mimetype: file.type,
+                        uploadDate: new Date().toISOString(),
+                        isChunked: base64Data.length > CHUNK_SIZE,
+                        totalChunks: Math.ceil(base64Data.length / CHUNK_SIZE),
+                        totalSize: base64Data.length
+                    };
+                    
+                    // Save file metadata
+                    const fileTransaction = db.transaction(['files'], 'readwrite');
+                    await fileTransaction.objectStore('files').put(fileData);
+                    
+                    // Save chunks
+                    if (base64Data.length <= CHUNK_SIZE) {
+                        // Single chunk
+                        const chunkTransaction = db.transaction(['chunks'], 'readwrite');
+                        await chunkTransaction.objectStore('chunks').put({
+                            id: `${fileData.id}_chunk_0`,
+                            fileId: fileData.id,
+                            chunkIndex: 0,
+                            data: base64Data,
+                            size: base64Data.length
+                        });
+                        addResult(`✅ ${file.name} saved as single chunk`, 'success');
+                    } else {
+                        // Multiple chunks
+                        const chunkTransaction = db.transaction(['chunks'], 'readwrite');
+                        const chunksCount = Math.ceil(base64Data.length / CHUNK_SIZE);
+                        
+                        for (let i = 0; i < chunksCount; i++) {
+                            const chunkData = base64Data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                            await chunkTransaction.objectStore('chunks').put({
+                                id: `${fileData.id}_chunk_${i}`,
+                                fileId: fileData.id,
+                                chunkIndex: i,
+                                data: chunkData,
+                                size: chunkData.length
+                            });
+                        }
+                        addResult(`✅ ${file.name} saved in ${chunksCount} chunks`, 'success');
+                    }
+                }
+                
+                await updateStats();
+            } catch (error) {
+                addResult('❌ Real file upload failed: ' + error.message, 'error');
+            }
+        }
+
+        async function clearAllData() {
+            try {
+                if (!db) await initDatabase();
+                
+                const transaction = db.transaction(['folders', 'files', 'chunks'], 'readwrite');
+                await transaction.objectStore('folders').clear();
+                await transaction.objectStore('files').clear();
+                await transaction.objectStore('chunks').clear();
+                
+                addResult('✅ All data cleared', 'success');
+                await updateStats();
+            } catch (error) {
+                addResult('❌ Clear data failed: ' + error.message, 'error');
+            }
+        }
+
+        async function updateStats() {
+            try {
+                if (!db) {
+                    document.getElementById('storageStats').textContent = 'Database not initialized';
+                    return;
+                }
+                
+                const [folders, files, chunks] = await Promise.all([
+                    new Promise((resolve, reject) => {
+                        const request = db.transaction(['folders'], 'readonly').objectStore('folders').getAll();
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    }),
+                    new Promise((resolve, reject) => {
+                        const request = db.transaction(['files'], 'readonly').objectStore('files').getAll();
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    }),
+                    new Promise((resolve, reject) => {
+                        const request = db.transaction(['chunks'], 'readonly').objectStore('chunks').getAll();
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    })
+                ]);
+                
+                const totalSize = chunks.reduce((sum, chunk) => sum + chunk.size, 0);
+                const chunkedFiles = files.filter(f => f.isChunked).length;
+                
+                document.getElementById('storageStats').innerHTML = `
+                    📁 Folders: ${folders.length}<br>
+                    📄 Files: ${files.length}<br>
+                    📦 Chunks: ${chunks.length}<br>
+                    🔗 Chunked Files: ${chunkedFiles}<br>
+                    💾 Total Size: ${formatFileSize(totalSize)}<br>
+                    🏪 Database: ${DB_NAME} v${DB_VERSION}
+                `;
+            } catch (error) {
+                document.getElementById('storageStats').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async function() {
+            await updateStats();
+            addResult('🚀 Test environment ready', 'info');
+        });
+    </script>
+</body>
+</html>

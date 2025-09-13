@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>File Container - GitHub Pages Edition</title>
+    <title>🚀 File Container - Real IndexedDB Storage</title>
     <style>
         * {
             margin: 0;
@@ -473,7 +473,244 @@
     </div>
 
     <script>
-        // File-based storage configuration
+        // ============================================================================
+        // REAL STORAGE SYSTEM - IndexedDB Implementation
+        // ============================================================================
+        
+        let db;
+        const DB_NAME = 'FileContainerDB';
+        const DB_VERSION = 1;
+        const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB chunks
+        
+        // Initialize IndexedDB
+        async function initDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    console.log('✅ IndexedDB initialized successfully');
+                    resolve(db);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    
+                    // Create folders store
+                    if (!db.objectStoreNames.contains('folders')) {
+                        const foldersStore = db.createObjectStore('folders', { keyPath: 'id' });
+                        foldersStore.createIndex('name', 'name', { unique: true });
+                    }
+                    
+                    // Create files store
+                    if (!db.objectStoreNames.contains('files')) {
+                        const filesStore = db.createObjectStore('files', { keyPath: 'id' });
+                        filesStore.createIndex('folder', 'folder', { unique: false });
+                        filesStore.createIndex('name', 'name', { unique: false });
+                    }
+                    
+                    // Create chunks store for large files
+                    if (!db.objectStoreNames.contains('chunks')) {
+                        const chunksStore = db.createObjectStore('chunks', { keyPath: 'id' });
+                        chunksStore.createIndex('fileId', 'fileId', { unique: false });
+                        chunksStore.createIndex('chunkIndex', 'chunkIndex', { unique: false });
+                    }
+                    
+                    console.log('📦 Database stores created');
+                };
+            });
+        }
+        
+        // Real storage functions
+        async function saveFolder(folderData) {
+            const transaction = db.transaction(['folders'], 'readwrite');
+            const store = transaction.objectStore('folders');
+            return store.put(folderData);
+        }
+        
+        async function getAllFolders() {
+            const transaction = db.transaction(['folders'], 'readonly');
+            const store = transaction.objectStore('folders');
+            return new Promise((resolve, reject) => {
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        async function deleteFolderDB(folderId) {
+            const transaction = db.transaction(['folders', 'files', 'chunks'], 'readwrite');
+            
+            // Delete folder
+            await transaction.objectStore('folders').delete(folderId);
+            
+            // Delete all files in folder
+            const filesStore = transaction.objectStore('files');
+            const filesIndex = filesStore.index('folder');
+            const filesToDelete = await new Promise((resolve, reject) => {
+                const request = filesIndex.getAll(folderId);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            
+            // Delete files and their chunks
+            for (const file of filesToDelete) {
+                await filesStore.delete(file.id);
+                await deleteFileChunks(file.id);
+            }
+        }
+        
+        async function saveFileWithChunking(fileData, fileContent) {
+            const fileId = fileData.id;
+            const contentSize = fileContent.length;
+            
+            console.log(`💾 Saving file "${fileData.name}" (${formatFileSize(contentSize)})`);
+            
+            // Save file metadata
+            const transaction = db.transaction(['files'], 'readwrite');
+            await transaction.objectStore('files').put({
+                ...fileData,
+                isChunked: contentSize > CHUNK_SIZE,
+                totalChunks: Math.ceil(contentSize / CHUNK_SIZE),
+                totalSize: contentSize
+            });
+            
+            // If file is small, store directly
+            if (contentSize <= CHUNK_SIZE) {
+                const chunkTransaction = db.transaction(['chunks'], 'readwrite');
+                await chunkTransaction.objectStore('chunks').put({
+                    id: `${fileId}_chunk_0`,
+                    fileId: fileId,
+                    chunkIndex: 0,
+                    data: fileContent,
+                    size: contentSize
+                });
+                console.log(`✅ File stored as single chunk`);
+                return;
+            }
+            
+            // Split large files into chunks
+            const chunks = [];
+            for (let i = 0; i < contentSize; i += CHUNK_SIZE) {
+                const chunkData = fileContent.slice(i, i + CHUNK_SIZE);
+                chunks.push({
+                    id: `${fileId}_chunk_${Math.floor(i / CHUNK_SIZE)}`,
+                    fileId: fileId,
+                    chunkIndex: Math.floor(i / CHUNK_SIZE),
+                    data: chunkData,
+                    size: chunkData.length
+                });
+            }
+            
+            // Save all chunks
+            const chunkTransaction = db.transaction(['chunks'], 'readwrite');
+            const chunksStore = chunkTransaction.objectStore('chunks');
+            for (const chunk of chunks) {
+                await chunksStore.put(chunk);
+            }
+            
+            console.log(`✅ File "${fileData.name}" saved in ${chunks.length} chunks`);
+        }
+        
+        async function getFileWithChunks(fileId) {
+            // Get file metadata
+            const fileTransaction = db.transaction(['files'], 'readonly');
+            const file = await new Promise((resolve, reject) => {
+                const request = fileTransaction.objectStore('files').get(fileId);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            
+            if (!file) return null;
+            
+            // Get all chunks for this file
+            const chunkTransaction = db.transaction(['chunks'], 'readonly');
+            const chunksStore = chunkTransaction.objectStore('chunks');
+            const chunksIndex = chunksStore.index('fileId');
+            
+            const chunks = await new Promise((resolve, reject) => {
+                const request = chunksIndex.getAll(fileId);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            
+            // Sort chunks by index and reconstruct file
+            chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+            const reconstructedContent = chunks.map(chunk => chunk.data).join('');
+            
+            return {
+                ...file,
+                content: reconstructedContent
+            };
+        }
+        
+        async function getAllFiles() {
+            const transaction = db.transaction(['files'], 'readonly');
+            const store = transaction.objectStore('files');
+            return new Promise((resolve, reject) => {
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        async function deleteFileChunks(fileId) {
+            const transaction = db.transaction(['chunks'], 'readwrite');
+            const store = transaction.objectStore('chunks');
+            const index = store.index('fileId');
+            
+            const chunks = await new Promise((resolve, reject) => {
+                const request = index.getAll(fileId);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            
+            for (const chunk of chunks) {
+                await store.delete(chunk.id);
+            }
+        }
+        
+        async function deleteFileComplete(fileId) {
+            const transaction = db.transaction(['files', 'chunks'], 'readwrite');
+            
+            // Delete file metadata
+            await transaction.objectStore('files').delete(fileId);
+            
+            // Delete all chunks
+            await deleteFileChunks(fileId);
+        }
+        
+        async function getStorageStats() {
+            const [folders, files, chunks] = await Promise.all([
+                getAllFolders(),
+                getAllFiles(),
+                new Promise((resolve, reject) => {
+                    const transaction = db.transaction(['chunks'], 'readonly');
+                    const request = transaction.objectStore('chunks').getAll();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                })
+            ]);
+            
+            const totalSize = chunks.reduce((sum, chunk) => sum + chunk.size, 0);
+            const chunkedFiles = files.filter(f => f.isChunked).length;
+            
+            return {
+                totalFolders: folders.length,
+                totalFiles: files.length,
+                totalChunks: chunks.length,
+                totalSize: totalSize,
+                chunkedFiles: chunkedFiles,
+                averageChunkSize: chunks.length > 0 ? totalSize / chunks.length : 0
+            };
+        }
+
+        // ============================================================================
+        // COMPATIBILITY LAYER - Bridge old functions to new IndexedDB system
+        // ============================================================================
+
+        // File-based storage configuration (for backward compatibility)
         const FILE_CONFIG = {
             DATA_PATH: './data/',
             INDEX_FILE: 'index.json',
@@ -488,19 +725,19 @@
         let allDataFiles = [];
 
         // Initialize page
-        document.addEventListener('DOMContentLoaded', function() {
-            loadDataIndex()
-                .then(() => loadAllDataFiles())
-                .then(() => {
-                    loadFolders();
-                    loadFileList();
-                    setupDragAndDrop();
-                    updateStorageInfo();
-                })
-                .catch(error => {
-                    console.error('Initialization error:', error);
-                    showAlert('Error loading data: ' + error.message, 'error');
-                });
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                showAlert('🚀 Initializing Real Storage System...', 'info');
+                await loadAllData();
+                await loadFolders();
+                await loadFileList();
+                setupDragAndDrop();
+                await updateStorageInfo();
+                showAlert('✅ Real Storage System Ready! Your files are now stored permanently.', 'success');
+            } catch (error) {
+                console.error('Initialization error:', error);
+                showAlert('Error initializing storage: ' + error.message, 'error');
+            }
         });
 
         // Load data index file
@@ -536,50 +773,38 @@
         }
 
         // Load all data files
-        async function loadAllDataFiles() {
+        // Initialize and load all data from IndexedDB
+        async function loadAllData() {
             try {
-                allDataFiles = [];
-                for (const fileInfo of dataIndex.dataFiles) {
-                    try {
-                        const response = await fetch(FILE_CONFIG.DATA_PATH + fileInfo.filename);
-                        if (response.ok) {
-                            const data = await response.json();
-                            allDataFiles.push({
-                                info: fileInfo,
-                                data: data
-                            });
-                        }
-                    } catch (error) {
-                        console.warn(`Could not load ${fileInfo.filename}:`, error);
-                    }
-                }
-                console.log('Loaded data files:', allDataFiles.length);
+                await initDatabase();
+                updateStorageInfo();
+                console.log('✅ Real storage system initialized');
             } catch (error) {
-                console.error('Error loading data files:', error);
-                showAlert('Error loading data files: ' + error.message, 'error');
+                console.error('❌ Failed to initialize database:', error);
+                showAlert('Error initializing storage: ' + error.message, 'error');
             }
         }
 
-        // Get all folders from all data files
-        function getFoldersData() {
-            const allFolders = {};
-            allDataFiles.forEach(fileData => {
-                if (fileData.data.folders) {
-                    Object.assign(allFolders, fileData.data.folders);
-                }
-            });
-            return allFolders;
+        // Legacy function for compatibility - replaced with IndexedDB
+        async function loadAllDataFiles() {
+            // No longer needed - data comes from IndexedDB
+            console.log('ℹ️ Using IndexedDB instead of JSON files');
+            return Promise.resolve();
         }
 
-        // Get all files from all data files
-        function getFilesData() {
-            const allFiles = [];
-            allDataFiles.forEach(fileData => {
-                if (fileData.data.files && Array.isArray(fileData.data.files)) {
-                    allFiles.push(...fileData.data.files);
-                }
+        // Get all folders from IndexedDB
+        async function getFoldersData() {
+            const folders = await getAllFolders();
+            const foldersObject = {};
+            folders.forEach(folder => {
+                foldersObject[folder.name] = folder;
             });
-            return allFiles;
+            return foldersObject;
+        }
+
+        // Get all files from IndexedDB
+        async function getFilesData() {
+            return await getAllFiles();
         }
 
         // Save data to appropriate JSON file
@@ -612,13 +837,21 @@
             }
         }
 
-        // Wrapper functions for backward compatibility
-        function saveFoldersData(foldersData) {
-            saveData(foldersData, null);
+        // Wrapper functions for backward compatibility - now use IndexedDB
+        async function saveFoldersData(foldersData) {
+            // Convert object to array and save each folder
+            for (const [folderName, folderData] of Object.entries(foldersData)) {
+                await saveFolder({
+                    id: folderName,
+                    name: folderName,
+                    ...folderData
+                });
+            }
         }
 
-        function saveFilesData(filesData) {
-            saveData(null, filesData);
+        async function saveFilesData(filesData) {
+            // Files are saved individually through uploadFile function
+            console.log('ℹ️ Files saved individually through IndexedDB');
         }
 
         // Distribute files across multiple JSON files based on size
@@ -763,53 +996,45 @@
         }
 
         // Update storage info
-        function updateStorageInfo() {
-            if (!dataIndex) return;
-
-            const totalSizeBytes = dataIndex.totalSizeBytes || 0;
-            const totalSizeKB = (totalSizeBytes / 1024).toFixed(2);
-            const totalSizeMB = (totalSizeBytes / (1024 * 1024)).toFixed(2);
-            
-            document.getElementById('storageUsed').textContent = 
-                totalSizeBytes > 1024 * 1024 ? totalSizeMB + ' MB' : totalSizeKB + ' KB';
-            
-            document.getElementById('fileCount').textContent = dataIndex.totalDataFiles || 0;
-            
-            // Update storage details
-            const storageDetails = document.getElementById('storageDetails');
-            const activeFiles = allDataFiles.filter(f => f.info.active).length;
-            
-            storageDetails.innerHTML = 
-                `📊 ${dataIndex.totalFiles || 0} files dalam ${dataIndex.totalFolders || 0} folders • ` +
-                `${activeFiles} data files aktif • ` +
-                `Last update: ${dataIndex.lastUpdate ? new Date(dataIndex.lastUpdate).toLocaleString('id-ID') : 'Unknown'}`;
-            
-            // Calculate percentage (no strict limit for file-based storage)
-            const estimatedMaxSize = (dataIndex.totalDataFiles || 1) * FILE_CONFIG.MAX_FILE_SIZE;
-            const percentage = Math.min((totalSizeBytes / estimatedMaxSize) * 100, 100);
-            document.getElementById('storageFill').style.width = percentage + '%';
-            
-            // Update progress bar color
-            const progressBar = document.getElementById('storageFill');
-            if (percentage > 90) {
-                progressBar.style.background = 'linear-gradient(135deg, #ff6b6b, #ee5a24)';
-            } else if (percentage > 75) {
-                progressBar.style.background = 'linear-gradient(135deg, #ffa726, #ff7043)';
-            } else {
-                progressBar.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
+        async function updateStorageInfo() {
+            try {
+                const stats = await getStorageStats();
+                
+                const totalSizeBytes = stats.totalSize || 0;
+                const totalSizeKB = (totalSizeBytes / 1024).toFixed(2);
+                const totalSizeMB = (totalSizeBytes / (1024 * 1024)).toFixed(2);
+                
+                document.getElementById('storageUsed').textContent = 
+                    totalSizeBytes > 1024 * 1024 ? totalSizeMB + ' MB' : totalSizeKB + ' KB';
+                
+                document.getElementById('fileCount').textContent = stats.totalChunks || 0;
+                
+                // Update storage details with IndexedDB info
+                const storageDetails = document.getElementById('storageDetails');
+                
+                storageDetails.innerHTML = 
+                    `� ${stats.totalFiles || 0} files dalam ${stats.totalFolders || 0} folders • ` +
+                    `📦 ${stats.totalChunks || 0} chunks • ` +
+                    `🔗 ${stats.chunkedFiles || 0} chunked files • ` +
+                    `Real IndexedDB Storage`;
+                
+                console.log('📊 Storage Stats:', stats);
+            } catch (error) {
+                console.error('Error updating storage info:', error);
+                document.getElementById('storageUsed').textContent = 'Error';
+                document.getElementById('fileCount').textContent = '0';
             }
         }
 
-        // Refresh data files from repository
+        // Refresh data files from IndexedDB
         async function refreshDataFiles() {
             try {
-                showAlert('🔄 Refreshing data files...', 'success');
-                await loadDataIndex();
-                await loadAllDataFiles();
-                loadFolders();
-                loadFileList();
-                updateStorageInfo();
-                showAlert('✅ Data files refreshed successfully!', 'success');
+                showAlert('🔄 Refreshing data from IndexedDB...', 'success');
+                await loadAllData();
+                await loadFolders();
+                await loadFileList();
+                await updateStorageInfo();
+                showAlert('✅ Data refreshed successfully!', 'success');
             } catch (error) {
                 showAlert('Error refreshing data: ' + error.message, 'error');
             }
@@ -870,7 +1095,7 @@
                 return;
             }
 
-            const foldersData = getFoldersData();
+            const foldersData = await getFoldersData();
             
             if (foldersData[sanitizedName]) {
                 showAlert('Folder sudah ada', 'error');
@@ -882,19 +1107,20 @@
                 const hashedPassword = await hashPassword(password);
                 
                 // Create folder data
-                foldersData[sanitizedName] = {
+                const folderData = {
+                    id: sanitizedName,
                     name: sanitizedName,
                     password: hashedPassword,
                     createdAt: new Date().toISOString()
                 };
                 
-                await saveData(foldersData, null);
+                await saveFolder(folderData);
                 
-                showAlert(`Folder "${sanitizedName}" berhasil dibuat!`, 'success');
+                showAlert(`✅ Folder "${sanitizedName}" berhasil dibuat dengan real storage!`, 'success');
                 document.getElementById('folderName').value = '';
                 document.getElementById('folderPassword').value = '';
-                loadFolders();
-                loadFileList();
+                await loadFolders();
+                await loadFileList();
             } catch (error) {
                 showAlert('Error creating folder: ' + error.message, 'error');
             }
@@ -911,8 +1137,7 @@
             }
 
             try {
-                showAlert('Converting files...', 'success');
-                const filesData = getFilesData();
+                showAlert('🔄 Converting and saving files...', 'info');
                 
                 for (let file of files) {
                     const base64Data = await fileToBase64(file);
@@ -923,20 +1148,20 @@
                         folder: targetFolder,
                         size: file.size,
                         mimetype: file.type,
-                        uploadDate: new Date().toISOString(),
-                        base64Data: base64Data
+                        uploadDate: new Date().toISOString()
                     };
                     
-                    filesData.push(fileInfo);
+                    // Save file with automatic chunking
+                    await saveFileWithChunking(fileInfo, base64Data);
                 }
                 
-                await saveData(null, filesData);
-                
-                showAlert(`${files.length} file berhasil diupload ke folder "${targetFolder}"!`, 'success');
+                showAlert(`✅ ${files.length} file berhasil disimpan ke folder "${targetFolder}" dengan real storage!`, 'success');
                 document.getElementById('fileInput').value = '';
                 updateUploadButton();
-                loadFileList();
+                await loadFileList();
+                updateStorageInfo();
             } catch (error) {
+                console.error('Upload error:', error);
                 showAlert('Error uploading files: ' + error.message, 'error');
             }
         }
@@ -1253,78 +1478,96 @@
         }
 
         // Load file list
-        function loadFileList() {
-            const foldersData = getFoldersData();
-            const filesData = getFilesData();
-            
-            const fileList = document.getElementById('fileList');
-            fileList.innerHTML = '';
-
-            // Update breadcrumb
-            updateBreadcrumb();
-
-            // Show folders (only at root level)
-            let folders = [];
-            if (!currentFolder) {
-                folders = Object.keys(foldersData);
-            }
-
-            // Show folders
-            folders.forEach(folder => {
-                const folderDiv = document.createElement('div');
-                folderDiv.className = 'folder-item';
-                folderDiv.innerHTML = `
-                    <div class="folder-name">📁 ${folder}</div>
-                    <div class="file-info">
-                        Dibuat: ${new Date(foldersData[folder].createdAt).toLocaleString('id-ID')}
-                    </div>
-                    <div class="file-actions">
-                        <button class="btn" onclick="loadFolder('${folder}')">📂 Buka</button>
-                        <button class="btn btn-danger" onclick="showDeleteModal('folder', '${folder}')">🗑️ Hapus</button>
-                    </div>
-                `;
-                fileList.appendChild(folderDiv);
-            });
-
-            // Show files in current folder
-            const folderFiles = filesData.filter(file => file.folder === currentFolder);
-            folderFiles.forEach(file => {
-                const fileDiv = document.createElement('div');
-                fileDiv.className = 'file-item';
+        async function loadFileList() {
+            try {
+                const foldersData = await getFoldersData();
+                const filesData = await getFilesData();
                 
-                // Generate media preview if applicable
-                let mediaPreview = '';
-                if (isImageFile(file.name, file.mimetype)) {
-                    mediaPreview = createImagePreview(file);
-                } else if (isVideoFile(file.name, file.mimetype)) {
-                    mediaPreview = createVideoPreview(file);
+                const fileList = document.getElementById('fileList');
+                fileList.innerHTML = '';
+
+                // Update breadcrumb
+                updateBreadcrumb();
+
+                // Show folders (only at root level)
+                let folders = [];
+                if (!currentFolder) {
+                    folders = Object.keys(foldersData);
                 }
-                
-                fileDiv.innerHTML = `
-                    <div class="file-name">📄 ${file.name}</div>
-                    ${mediaPreview}
-                    <div class="file-info">
-                        Ukuran: ${formatFileSize(file.size)}<br>
-                        Upload: ${new Date(file.uploadDate).toLocaleString('id-ID')}<br>
-                        Type: ${file.mimetype || 'Unknown'}
-                    </div>
-                    <div class="file-actions">
-                        <button class="btn" onclick="downloadFile('${file.id}')">📥 Download</button>
-                        <button class="btn btn-danger" onclick="showDeleteModal('file', '${file.name}', '${file.folder}', '${file.id}')">🗑️ Hapus</button>
-                    </div>
-                `;
-                fileList.appendChild(fileDiv);
-            });
 
-            if (folders.length === 0 && folderFiles.length === 0) {
-                fileList.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">Tidak ada file atau folder</p>';
+                // Show folders
+                folders.forEach(folder => {
+                    const folderDiv = document.createElement('div');
+                    folderDiv.className = 'folder-item';
+                    folderDiv.innerHTML = `
+                        <div class="folder-name">📁 ${folder}</div>
+                        <div class="file-info">
+                            Dibuat: ${new Date(foldersData[folder].createdAt).toLocaleString('id-ID')}
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn" onclick="loadFolder('${folder}')">📂 Buka</button>
+                            <button class="btn btn-danger" onclick="showDeleteModal('folder', '${folder}')">🗑️ Hapus</button>
+                        </div>
+                    `;
+                    fileList.appendChild(folderDiv);
+                });
+
+                // Show files in current folder
+                const folderFiles = filesData.filter(file => file.folder === currentFolder);
+                
+                // Process files with media preview
+                for (const file of folderFiles) {
+                    const fileDiv = document.createElement('div');
+                    fileDiv.className = 'file-item';
+                    
+                    // Generate media preview if applicable
+                    let mediaPreview = '';
+                    if (isImageFile(file.name, file.mimetype) || isVideoFile(file.name, file.mimetype)) {
+                        try {
+                            const fileWithContent = await getFileWithChunks(file.id);
+                            if (fileWithContent) {
+                                if (isImageFile(file.name, file.mimetype)) {
+                                    mediaPreview = createImagePreview(fileWithContent);
+                                } else if (isVideoFile(file.name, file.mimetype)) {
+                                    mediaPreview = createVideoPreview(fileWithContent);
+                                }
+                            }
+                        } catch (error) {
+                            console.warn(`Could not load preview for ${file.name}:`, error);
+                        }
+                    }
+                    
+                    const chunkInfo = file.isChunked ? `<br>📦 Chunked: ${file.totalChunks} parts` : '';
+                    
+                    fileDiv.innerHTML = `
+                        <div class="file-name">📄 ${file.name}</div>
+                        ${mediaPreview}
+                        <div class="file-info">
+                            Ukuran: ${formatFileSize(file.totalSize || file.size)}<br>
+                            Upload: ${new Date(file.uploadDate).toLocaleString('id-ID')}<br>
+                            Type: ${file.mimetype || 'Unknown'}${chunkInfo}
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn" onclick="downloadFile('${file.id}')">📥 Download</button>
+                            <button class="btn btn-danger" onclick="showDeleteModal('file', '${file.name}', '${file.folder}', '${file.id}')">🗑️ Hapus</button>
+                        </div>
+                    `;
+                    fileList.appendChild(fileDiv);
+                }
+
+                if (folders.length === 0 && folderFiles.length === 0) {
+                    fileList.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">Tidak ada file atau folder</p>';
+                }
+            } catch (error) {
+                console.error('Error loading file list:', error);
+                showAlert('Error loading files: ' + error.message, 'error');
             }
         }
 
         // Load specific folder
-        function loadFolder(folderName) {
+        async function loadFolder(folderName) {
             currentFolder = folderName;
-            loadFileList();
+            await loadFileList();
         }
 
         // Update breadcrumb
@@ -1340,16 +1583,23 @@
         }
 
         // Download file
-        function downloadFile(fileId) {
-            const filesData = getFilesData();
-            const fileInfo = filesData.find(f => f.id === fileId);
-            
-            if (!fileInfo) {
-                showAlert('File tidak ditemukan', 'error');
-                return;
+        async function downloadFile(fileId) {
+            try {
+                showAlert('🔄 Reconstructing file from chunks...', 'info');
+                const fileWithContent = await getFileWithChunks(fileId);
+                
+                if (!fileWithContent) {
+                    showAlert('File tidak ditemukan', 'error');
+                    return;
+                }
+                
+                console.log(`📥 Downloading ${fileWithContent.name} (${formatFileSize(fileWithContent.totalSize)})`);
+                downloadBase64File(fileWithContent.content, fileWithContent.name);
+                showAlert(`✅ File "${fileWithContent.name}" berhasil didownload!`, 'success');
+            } catch (error) {
+                console.error('Download error:', error);
+                showAlert('Error downloading file: ' + error.message, 'error');
             }
-            
-            downloadBase64File(fileInfo.base64Data, fileInfo.name);
         }
 
         // Show delete modal
