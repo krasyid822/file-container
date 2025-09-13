@@ -78,12 +78,14 @@ file-container/
 |-------|-------------|----------------|
 | **Hosting** | ✅ Free (GitHub) | ❌ Perlu server sendiri |
 | **Setup** | ✅ Mudah | ⚠️ Perlu install Node.js |
-| **Storage** | ⚠️ Browser only (~5-10MB) | ✅ Server disk |
-| **File Size** | ⚠️ Max ~2MB per file | ✅ Max 100MB per file |
-| **Persistence** | ⚠️ Per browser | ✅ Permanent |
+| **Storage** | ✅ JSON Chunks (~25MB+) | ✅ Server disk |
+| **File Size** | ✅ Support hingga 25MB | ✅ Max 100MB per file |
+| **Persistence** | ✅ Browser storage | ✅ Permanent |
 | **Multi-User** | ❌ Local only | ✅ Multiple users |
-| **Backup** | ✅ Export/Import | ✅ Server backup |
-| **Performance** | ✅ Fast (client-side) | ⚠️ Depends on server |
+| **Backup** | ✅ Chunked export/import | ✅ Server backup |
+| **Performance** | ✅ Fast chunked loading | ⚠️ Depends on server |
+| **Auto-Split** | ✅ 20MB auto chunking | ❌ Not needed |
+| **Optimization** | ✅ Auto duplicate removal | ❌ Manual |
 
 ## 🎯 Cara Penggunaan
 
@@ -211,6 +213,30 @@ Interface sudah dioptimasi untuk:
 - **Secure Folders**: Password protection untuk setiap folder
 - **Breadcrumb Navigation**: Navigasi yang mudah
 - **File Information**: Menampilkan ukuran file dan tanggal upload
+- **JSON Chunked Storage**: Auto-split data ketika >20MB
+- **Storage Optimization**: Auto-remove duplicates dan cleanup
+- **Chunked Export/Import**: Support backup file besar
+- **Progressive Loading**: Load chunks sesuai kebutuhan
+- **Real-time Monitoring**: Storage usage dengan chunk info
+
+## 💾 Teknologi Storage (GitHub Pages)
+
+### 🔧 JSON Chunked Storage System
+- **Auto-splitting**: Data otomatis dipecah ketika mencapai 20MB
+- **25MB+ Capacity**: Jauh lebih besar dari localStorage biasa
+- **Chunk Management**: Efisien load/save hanya chunk yang diperlukan
+- **Data Integrity**: Validasi dan recovery otomatis
+- **Migration**: Auto-migrate dari sistem storage lama
+
+### 📊 Storage Architecture
+```
+localStorage:
+├── fileContainer_folders     # Metadata folder + passwords
+├── fileContainer_meta        # Chunk metadata & statistics
+├── fileContainer_chunk_0     # File data chunk 1 (≤20MB)
+├── fileContainer_chunk_1     # File data chunk 2 (≤20MB)
+└── fileContainer_chunk_n     # File data chunk n+1
+```
 
 ## 🚨 Keamanan & Limitasi
 

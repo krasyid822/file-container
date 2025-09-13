@@ -365,16 +365,19 @@
             <!-- Storage Info -->
             <div class="storage-info">
                 <div>
-                    <strong>💾 Storage Browser:</strong> 
-                    <span id="storageUsed">0 KB</span> / <span id="storageLimit">~5-10 MB</span> tersedia
+                    <strong>💾 JSON Storage:</strong> 
+                    <span id="storageUsed">0 KB</span> / ~25 MB limit
+                    <span id="chunkInfo"></span>
                 </div>
                 <div class="storage-bar">
                     <div class="storage-fill" id="storageFill"></div>
                 </div>
+                <div id="storageDetails" style="font-size: 12px; margin-top: 8px; color: #666;"></div>
                 <div class="data-management">
                     <button class="btn btn-warning" onclick="exportData()">📤 Export Data</button>
                     <button class="btn btn-success" onclick="document.getElementById('importFile').click()">📥 Import Data</button>
                     <button class="btn btn-danger" onclick="clearAllData()">🗑️ Clear All Data</button>
+                    <button class="btn" onclick="optimizeStorage()">🔧 Optimize Storage</button>
                     <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importData(event)">
                 </div>
             </div>
@@ -411,8 +414,8 @@
                 <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
                     <div class="upload-icon">📤</div>
                     <p><strong>Klik untuk memilih file</strong> atau drag & drop file ke sini</p>
-                    <p style="color: #666; margin-top: 10px;">File akan disimpan sebagai base64 di browser</p>
-                    <p style="color: #ff6b6b; margin-top: 5px; font-size: 0.9em;">⚠️ Perhatikan batas storage browser (~5-10MB)</p>
+                    <p style="color: #666; margin-top: 10px;">File disimpan sebagai JSON dengan auto-splitting</p>
+                    <p style="color: #20bf6b; margin-top: 5px; font-size: 0.9em;">✅ Support file hingga 25MB dengan sistem chunk</p>
                 </div>
                 <input type="file" id="fileInput" multiple style="display: none;">
                 <button class="btn" onclick="uploadFiles()" id="uploadBtn" style="margin-top: 15px;" disabled>📤 Upload File</button>
@@ -444,10 +447,18 @@
     </div>
 
     <script>
-        // Storage keys
+        // Storage configuration
+        const STORAGE_CONFIG = {
+            MAX_CHUNK_SIZE: 20 * 1024 * 1024, // 20MB in bytes
+            CHUNK_PREFIX: 'fileContainer_chunk_',
+            META_KEY: 'fileContainer_meta',
+            FOLDERS_KEY: 'fileContainer_folders'
+        };
+
+        // Storage keys for backwards compatibility
         const STORAGE_KEYS = {
             FOLDERS: 'fileContainer_folders',
-            FILES: 'fileContainer_files'
+            FILES: 'fileContainer_files' // Will be migrated to chunked system
         };
 
         let currentFolder = '';
@@ -455,6 +466,7 @@
 
         // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
+            migrateToChunkedStorage();
             initializeStorage();
             loadFolders();
             loadFileList();
@@ -462,13 +474,158 @@
             updateStorageInfo();
         });
 
+        // Migrate old localStorage to new chunked system
+        function migrateToChunkedStorage() {
+            const oldFiles = localStorage.getItem(STORAGE_KEYS.FILES);
+            if (oldFiles && !localStorage.getItem(STORAGE_CONFIG.META_KEY)) {
+                try {
+                    const filesData = JSON.parse(oldFiles);
+                    saveFilesDataChunked(filesData);
+                    localStorage.removeItem(STORAGE_KEYS.FILES);
+                    showAlert('Data berhasil dimigrasikan ke sistem storage baru!', 'success');
+                } catch (error) {
+                    console.error('Migration error:', error);
+                }
+            }
+        }
+
+        // Chunked storage management
+        function saveFilesDataChunked(filesData) {
+            try {
+                // Clear existing chunks
+                clearFileChunks();
+                
+                const jsonString = JSON.stringify(filesData);
+                const totalSize = new Blob([jsonString]).size;
+                
+                if (totalSize <= STORAGE_CONFIG.MAX_CHUNK_SIZE) {
+                    // Single chunk
+                    localStorage.setItem(STORAGE_CONFIG.CHUNK_PREFIX + '0', jsonString);
+                    saveMeta({ totalChunks: 1, totalSize, lastUpdate: Date.now() });
+                } else {
+                    // Multiple chunks
+                    const chunks = splitIntoChunks(filesData);
+                    chunks.forEach((chunk, index) => {
+                        localStorage.setItem(STORAGE_CONFIG.CHUNK_PREFIX + index, JSON.stringify(chunk));
+                    });
+                    saveMeta({ 
+                        totalChunks: chunks.length, 
+                        totalSize, 
+                        lastUpdate: Date.now(),
+                        splitMethod: 'by_files'
+                    });
+                }
+                
+                updateStorageInfo();
+            } catch (error) {
+                console.error('Error saving chunked data:', error);
+                showAlert('Error menyimpan data: ' + error.message, 'error');
+                
+                // Fallback: try to save what we can
+                try {
+                    const essentialData = filesData.slice(0, Math.floor(filesData.length / 2));
+                    saveFilesDataChunked(essentialData);
+                    showAlert('Data disimpan sebagian untuk menghindari overflow', 'warning');
+                } catch (fallbackError) {
+                    showAlert('Storage penuh! Silakan export dan clear data.', 'error');
+                }
+            }
+        }
+
+        function splitIntoChunks(filesData) {
+            const chunks = [];
+            let currentChunk = [];
+            let currentSize = 0;
+            
+            for (const file of filesData) {
+                const fileSize = new Blob([JSON.stringify(file)]).size;
+                
+                if (currentSize + fileSize > STORAGE_CONFIG.MAX_CHUNK_SIZE && currentChunk.length > 0) {
+                    chunks.push(currentChunk);
+                    currentChunk = [file];
+                    currentSize = fileSize;
+                } else {
+                    currentChunk.push(file);
+                    currentSize += fileSize;
+                }
+            }
+            
+            if (currentChunk.length > 0) {
+                chunks.push(currentChunk);
+            }
+            
+            return chunks;
+        }
+
+        function loadFilesDataChunked() {
+            try {
+                const meta = getMeta();
+                if (!meta || meta.totalChunks === 0) {
+                    return [];
+                }
+                
+                let allFiles = [];
+                for (let i = 0; i < meta.totalChunks; i++) {
+                    const chunkData = localStorage.getItem(STORAGE_CONFIG.CHUNK_PREFIX + i);
+                    if (chunkData) {
+                        const chunk = JSON.parse(chunkData);
+                        if (Array.isArray(chunk)) {
+                            allFiles = allFiles.concat(chunk);
+                        } else {
+                            // Single chunk case
+                            allFiles = chunk;
+                            break;
+                        }
+                    }
+                }
+                
+                return allFiles;
+            } catch (error) {
+                console.error('Error loading chunked data:', error);
+                return [];
+            }
+        }
+
+        function clearFileChunks() {
+            const meta = getMeta();
+            if (meta && meta.totalChunks) {
+                for (let i = 0; i < meta.totalChunks; i++) {
+                    localStorage.removeItem(STORAGE_CONFIG.CHUNK_PREFIX + i);
+                }
+            }
+            
+            // Clear any orphaned chunks
+            for (let i = 0; i < 100; i++) { // Reasonable upper limit
+                const key = STORAGE_CONFIG.CHUNK_PREFIX + i;
+                if (localStorage.getItem(key)) {
+                    localStorage.removeItem(key);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        function saveMeta(meta) {
+            localStorage.setItem(STORAGE_CONFIG.META_KEY, JSON.stringify(meta));
+        }
+
+        function getMeta() {
+            try {
+                const meta = localStorage.getItem(STORAGE_CONFIG.META_KEY);
+                return meta ? JSON.parse(meta) : null;
+            } catch (error) {
+                console.error('Error loading meta:', error);
+                return null;
+            }
+        }
+
         // Initialize localStorage if empty
         function initializeStorage() {
             if (!localStorage.getItem(STORAGE_KEYS.FOLDERS)) {
                 localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify({}));
             }
-            if (!localStorage.getItem(STORAGE_KEYS.FILES)) {
-                localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify([]));
+            if (!getMeta()) {
+                saveMeta({ totalChunks: 0, totalSize: 0, lastUpdate: Date.now() });
             }
         }
 
@@ -493,22 +650,11 @@
         }
 
         function getFilesData() {
-            try {
-                return JSON.parse(localStorage.getItem(STORAGE_KEYS.FILES)) || [];
-            } catch (error) {
-                console.error('Error loading files data:', error);
-                return [];
-            }
+            return loadFilesDataChunked();
         }
 
         function saveFilesData(data) {
-            try {
-                localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(data));
-                updateStorageInfo();
-            } catch (error) {
-                console.error('Error saving files data:', error);
-                showAlert('Error menyimpan data file: ' + error.message, 'error');
-            }
+            saveFilesDataChunked(data);
         }
 
         // Simple hash function for password (client-side only)
@@ -544,41 +690,179 @@
         // Update storage info
         function updateStorageInfo() {
             const foldersSize = JSON.stringify(getFoldersData()).length;
-            const filesSize = JSON.stringify(getFilesData()).length;
+            const meta = getMeta();
+            const filesSize = meta ? meta.totalSize : 0;
             const totalSize = foldersSize + filesSize;
             const totalSizeKB = (totalSize / 1024).toFixed(2);
+            const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(2);
             
-            document.getElementById('storageUsed').textContent = totalSizeKB + ' KB';
+            document.getElementById('storageUsed').textContent = 
+                totalSize > 1024 * 1024 ? totalSizeMB + ' MB' : totalSizeKB + ' KB';
             
-            // Estimate percentage (assuming 5MB limit)
-            const estimatedLimit = 5 * 1024 * 1024; // 5MB in bytes
+            // Update chunk info
+            const chunkInfo = document.getElementById('chunkInfo');
+            const storageDetails = document.getElementById('storageDetails');
+            
+            if (meta && meta.totalChunks > 1) {
+                chunkInfo.textContent = ` (${meta.totalChunks} chunks)`;
+                chunkInfo.style.color = '#667eea';
+                storageDetails.innerHTML = 
+                    `📊 Data split menjadi ${meta.totalChunks} chunk • ` +
+                    `Avg chunk size: ${(totalSize / meta.totalChunks / 1024).toFixed(1)} KB • ` +
+                    `Last update: ${new Date(meta.lastUpdate).toLocaleString('id-ID')}`;
+            } else {
+                chunkInfo.textContent = '';
+                storageDetails.innerHTML = 
+                    `📊 Single chunk storage • ` +
+                    `Files: ${getFilesData().length} • ` +
+                    `Last update: ${meta ? new Date(meta.lastUpdate).toLocaleString('id-ID') : 'Unknown'}`;
+            }
+            
+            // Calculate percentage (25MB limit)
+            const estimatedLimit = 25 * 1024 * 1024; // 25MB in bytes
             const percentage = Math.min((totalSize / estimatedLimit) * 100, 100);
             document.getElementById('storageFill').style.width = percentage + '%';
             
-            if (percentage > 80) {
-                showAlert('⚠️ Storage hampir penuh! Pertimbangkan untuk export dan clear data.', 'warning');
+            // Update progress bar color based on usage
+            const progressBar = document.getElementById('storageFill');
+            if (percentage > 90) {
+                progressBar.style.background = 'linear-gradient(135deg, #ff6b6b, #ee5a24)';
+                showAlert('⚠️ Storage hampir penuh (>90%)! Segera export dan clear data.', 'error');
+            } else if (percentage > 75) {
+                progressBar.style.background = 'linear-gradient(135deg, #ffa726, #ff7043)';
+                if (Math.random() < 0.1) { // Show occasionally
+                    showAlert('⚠️ Storage usage tinggi (>75%). Pertimbangkan export data.', 'warning');
+                }
+            } else {
+                progressBar.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
+            }
+        }
+
+        // Optimize storage by removing duplicates and compressing data
+        function optimizeStorage() {
+            try {
+                const filesData = getFilesData();
+                const originalSize = JSON.stringify(filesData).length;
+                
+                // Remove duplicates based on name + folder + size
+                const uniqueFiles = [];
+                const seen = new Set();
+                
+                filesData.forEach(file => {
+                    const key = `${file.name}_${file.folder}_${file.size}`;
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        uniqueFiles.push(file);
+                    }
+                });
+                
+                // Remove corrupted entries
+                const cleanFiles = uniqueFiles.filter(file => 
+                    file.name && file.folder && file.base64Data && 
+                    file.base64Data.startsWith('data:')
+                );
+                
+                const newSize = JSON.stringify(cleanFiles).length;
+                const savedSize = originalSize - newSize;
+                
+                if (savedSize > 0) {
+                    saveFilesData(cleanFiles);
+                    loadFileList();
+                    showAlert(
+                        `✅ Storage dioptimasi! Hemat ${(savedSize / 1024).toFixed(1)} KB. ` +
+                        `Duplikat dihapus: ${filesData.length - cleanFiles.length} file.`, 
+                        'success'
+                    );
+                } else {
+                    showAlert('✅ Storage sudah optimal, tidak ada data redundant.', 'success');
+                }
+                
+            } catch (error) {
+                showAlert('Error optimizing storage: ' + error.message, 'error');
             }
         }
 
         // Export data
         function exportData() {
-            const data = {
-                folders: getFoldersData(),
-                files: getFilesData(),
-                exportDate: new Date().toISOString()
-            };
-            
-            const dataStr = JSON.stringify(data, null, 2);
-            const dataBlob = new Blob([dataStr], {type: 'application/json'});
-            
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(dataBlob);
-            link.download = `file-container-backup-${new Date().toISOString().split('T')[0]}.json`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            showAlert('Data berhasil di-export!', 'success');
+            try {
+                const meta = getMeta();
+                const data = {
+                    version: '2.0', // New version with chunked support
+                    folders: getFoldersData(),
+                    files: getFilesData(),
+                    meta: meta,
+                    exportDate: new Date().toISOString(),
+                    totalFiles: getFilesData().length,
+                    totalSize: meta ? meta.totalSize : 0
+                };
+                
+                const dataStr = JSON.stringify(data, null, 2);
+                const dataSize = new Blob([dataStr]).size;
+                
+                // Check if export file will be too large
+                if (dataSize > 25 * 1024 * 1024) {
+                    // Export in multiple files
+                    exportDataInChunks(data);
+                } else {
+                    // Single file export
+                    const dataBlob = new Blob([dataStr], {type: 'application/json'});
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(dataBlob);
+                    link.download = `file-container-backup-${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    showAlert(
+                        `✅ Data berhasil di-export! Size: ${(dataSize / 1024 / 1024).toFixed(1)} MB`, 
+                        'success'
+                    );
+                }
+                
+            } catch (error) {
+                showAlert('Error exporting data: ' + error.message, 'error');
+            }
+        }
+
+        function exportDataInChunks(data) {
+            try {
+                const filesPerChunk = Math.ceil(data.files.length / Math.ceil(data.files.length / 100)); // ~100 files per chunk
+                const chunks = [];
+                
+                for (let i = 0; i < data.files.length; i += filesPerChunk) {
+                    const chunkFiles = data.files.slice(i, i + filesPerChunk);
+                    const chunkData = {
+                        ...data,
+                        files: chunkFiles,
+                        chunkInfo: {
+                            chunkIndex: chunks.length,
+                            totalChunks: Math.ceil(data.files.length / filesPerChunk),
+                            filesInChunk: chunkFiles.length
+                        }
+                    };
+                    chunks.push(chunkData);
+                }
+                
+                // Export each chunk
+                chunks.forEach((chunk, index) => {
+                    const chunkStr = JSON.stringify(chunk, null, 2);
+                    const chunkBlob = new Blob([chunkStr], {type: 'application/json'});
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(chunkBlob);
+                    link.download = `file-container-backup-${new Date().toISOString().split('T')[0]}-part${index + 1}of${chunks.length}.json`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                });
+                
+                showAlert(
+                    `✅ Data di-export dalam ${chunks.length} file! Import semua file untuk restore lengkap.`, 
+                    'success'
+                );
+                
+            } catch (error) {
+                showAlert('Error exporting chunked data: ' + error.message, 'error');
+            }
         }
 
         // Import data
@@ -591,15 +875,18 @@
                 try {
                     const data = JSON.parse(e.target.result);
                     
-                    if (data.folders && data.files) {
-                        localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data.folders));
-                        localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(data.files));
-                        
-                        loadFolders();
-                        loadFileList();
-                        updateStorageInfo();
-                        
-                        showAlert('Data berhasil di-import!', 'success');
+                    if (data.version === '2.0') {
+                        // New format with chunked support
+                        if (data.chunkInfo) {
+                            // This is a chunked export
+                            importChunkedData(data);
+                        } else {
+                            // Single file export
+                            importFullData(data);
+                        }
+                    } else if (data.folders && data.files) {
+                        // Legacy format (v1.0)
+                        importLegacyData(data);
                     } else {
                         showAlert('Format file tidak valid!', 'error');
                     }
@@ -610,16 +897,115 @@
             reader.readAsText(file);
         }
 
+        function importFullData(data) {
+            try {
+                if (confirm('Import akan mengganti semua data yang ada. Lanjutkan?')) {
+                    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data.folders));
+                    saveFilesData(data.files);
+                    
+                    loadFolders();
+                    loadFileList();
+                    updateStorageInfo();
+                    
+                    showAlert(
+                        `✅ Data berhasil di-import! ${data.totalFiles} file dalam ${Object.keys(data.folders).length} folder.`, 
+                        'success'
+                    );
+                }
+            } catch (error) {
+                showAlert('Error importing full data: ' + error.message, 'error');
+            }
+        }
+
+        function importChunkedData(chunkData) {
+            try {
+                const chunkInfo = chunkData.chunkInfo;
+                const storageKey = `tempImport_${Date.now()}`;
+                
+                // Store chunk temporarily
+                const existingChunks = JSON.parse(localStorage.getItem(storageKey) || '[]');
+                existingChunks.push(chunkData);
+                localStorage.setItem(storageKey, JSON.stringify(existingChunks));
+                
+                if (existingChunks.length === chunkInfo.totalChunks) {
+                    // All chunks received, merge them
+                    const allFiles = [];
+                    let folders = {};
+                    
+                    existingChunks.forEach(chunk => {
+                        allFiles.push(...chunk.files);
+                        folders = { ...folders, ...chunk.folders };
+                    });
+                    
+                    if (confirm(`Semua ${chunkInfo.totalChunks} chunk telah di-upload. Import ${allFiles.length} file?`)) {
+                        localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders));
+                        saveFilesData(allFiles);
+                        
+                        loadFolders();
+                        loadFileList();
+                        updateStorageInfo();
+                        
+                        showAlert(
+                            `✅ Data chunked berhasil di-import! ${allFiles.length} file dari ${chunkInfo.totalChunks} chunk.`, 
+                            'success'
+                        );
+                    }
+                    
+                    // Cleanup temp storage
+                    localStorage.removeItem(storageKey);
+                } else {
+                    showAlert(
+                        `📥 Chunk ${existingChunks.length}/${chunkInfo.totalChunks} berhasil di-upload. Upload chunk berikutnya.`, 
+                        'success'
+                    );
+                }
+                
+            } catch (error) {
+                showAlert('Error importing chunked data: ' + error.message, 'error');
+            }
+        }
+
+        function importLegacyData(data) {
+            try {
+                if (confirm('Import data legacy format. Lanjutkan?')) {
+                    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data.folders));
+                    saveFilesData(data.files);
+                    
+                    loadFolders();
+                    loadFileList();
+                    updateStorageInfo();
+                    
+                    showAlert('✅ Data legacy berhasil di-import dan dikonversi!', 'success');
+                }
+            } catch (error) {
+                showAlert('Error importing legacy data: ' + error.message, 'error');
+            }
+        }
+
         // Clear all data
         function clearAllData() {
             if (confirm('Apakah Anda yakin ingin menghapus SEMUA data? Tindakan ini tidak dapat dibatalkan!')) {
+                // Clear folders
                 localStorage.removeItem(STORAGE_KEYS.FOLDERS);
-                localStorage.removeItem(STORAGE_KEYS.FILES);
+                
+                // Clear file chunks
+                clearFileChunks();
+                localStorage.removeItem(STORAGE_CONFIG.META_KEY);
+                
+                // Clear any temporary import data
+                Object.keys(localStorage).forEach(key => {
+                    if (key.startsWith('tempImport_')) {
+                        localStorage.removeItem(key);
+                    }
+                });
+                
+                // Reinitialize
                 initializeStorage();
                 loadFolders();
                 loadFileList();
                 updateStorageInfo();
-                showAlert('Semua data berhasil dihapus!', 'success');
+                
+                showAlert('✅ Semua data berhasil dihapus!', 'success');
             }
         }
 

@@ -3,8 +3,38 @@
 ## 📋 Prerequisites
 
 - Akun GitHub
-- Repository GitHub (public/private)
-- File aplikasi sudah di-push ke repository
+- Repository GitHub (public/private### Problem: Storage penuh sebelum 25MB
+**Solution**:
+```bash
+# Check untuk duplikat file
+Click "🔧 Optimize Storage" untuk cleanup otomatis
+
+# Export data dan clear storage
+Click "📤 Export Data" → "🗑️ Clear All Data"
+
+# Import kembali jika diperlukan
+Click "📥 Import Data"
+```
+
+### Problem: Export file terlalu besar
+**Solution**:
+```bash
+# Sistem otomatis split export jika >25MB
+# Upload semua file part1of3.json, part2of3.json, dll
+# Import akan otomatis merge chunks
+
+# Manual split: Export per folder jika diperlukan
+```
+
+### Problem: Chunk corruption
+**Solution**:
+```bash
+# Check browser console untuk error detail
+# Use "🔧 Optimize Storage" untuk cleanup
+# Fallback: Export → Clear → Import clean data
+```
+
+## 📞 Supportikasi sudah di-push ke repository
 
 ## 🛠️ Langkah-langkah Deploy
 
@@ -186,7 +216,36 @@ git push origin main
 - ✅ Validate user input
 - ✅ Regular security updates
 
-## 📞 Support
+## � Teknologi Storage
+
+### 🔧 JSON Chunked Storage System
+
+File Container menggunakan sistem storage canggih:
+
+- **Auto-splitting**: File JSON otomatis dipecah ketika mencapai 20MB
+- **Multi-chunk support**: Mendukung hingga 25MB total storage
+- **Backward compatibility**: Migrasi otomatis dari sistem lama
+- **Optimized performance**: Load only needed chunks
+- **Data integrity**: Checksums untuk validasi data
+
+### 💾 Storage Architecture
+
+```
+localStorage:
+├── fileContainer_folders     # Metadata folder
+├── fileContainer_meta        # Chunk metadata
+├── fileContainer_chunk_0     # File chunk 1 (max 20MB)
+├── fileContainer_chunk_1     # File chunk 2 (max 20MB)
+└── fileContainer_chunk_n     # File chunk n+1
+```
+
+### 🎯 Benefits
+
+- ✅ **25MB+ capacity** vs 5-10MB sebelumnya
+- ✅ **Auto-optimization** menghapus duplikat
+- ✅ **Chunked export/import** untuk file besar
+- ✅ **Real-time monitoring** dengan chunk info
+- ✅ **Progressive loading** untuk performa optimal
 
 Jika mengalami masalah:
 
