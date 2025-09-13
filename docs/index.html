@@ -514,6 +514,12 @@
             TOKEN: localStorage.getItem('github_token') || null
         };
         
+        // Debug: Check if token exists
+        console.log('🔧 GitHub Config loaded:', {
+            hasToken: !!GITHUB_CONFIG.TOKEN,
+            config: GITHUB_CONFIG
+        });
+        
         let db;
         const DB_NAME = 'FileContainerDB';
         const DB_VERSION = 1;
@@ -751,7 +757,7 @@
             }
         }
         
-        async function deleteFileFromGitHub(fileInfo) {
+        async function deleteFileInfoFromGitHub(fileInfo) {
             try {
                 const filePaths = [];
                 
@@ -787,7 +793,7 @@
             try {
                 // First get the file to get its SHA
                 const fileResponse = await githubApiRequest(
-                    `${GITHUB_CONFIG.BASE_URL}/contents/${path}`,
+                    `${GITHUB_CONFIG.API_BASE}/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${path}`,
                     'GET'
                 );
                 
@@ -798,7 +804,7 @@
                 
                 // Delete the file
                 await githubApiRequest(
-                    `${GITHUB_CONFIG.BASE_URL}/contents/${path}`,
+                    `${GITHUB_CONFIG.API_BASE}/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${path}`,
                     'DELETE',
                     {
                         message: message || `Delete ${path}`,
@@ -821,7 +827,7 @@
                 
                 // Get contents of the files directory
                 const response = await githubApiRequest(
-                    `${GITHUB_CONFIG.BASE_URL}/contents/${filesPath}`,
+                    `${GITHUB_CONFIG.API_BASE}/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${filesPath}`,
                     'GET'
                 );
                 
@@ -1212,6 +1218,9 @@ Current Token: ${tokenPreview}
                 showAlert(`❌ GitHub connection failed: ${error.message}`, 'error');
             }
         }
+        
+        // Debug: Verify testGitHubConnection is defined
+        console.log('🔧 testGitHubConnection defined:', typeof testGitHubConnection);
 
         // File-based storage configuration (for backward compatibility)
         const FILE_CONFIG = {
@@ -1808,7 +1817,7 @@ Current Token: ${tokenPreview}
             if (!file) return;
             
             const reader = new FileReader();
-            reader.onload = function(e) {
+            reader.onload = async function(e) {
                 try {
                     const importedData = JSON.parse(e.target.result);
                     
@@ -1827,13 +1836,13 @@ Current Token: ${tokenPreview}
                     } else if (importedData.folders && importedData.files) {
                         // Legacy format
                         if (confirm('Import legacy data? This will be merged with current data.')) {
-                            const currentFolders = getFoldersData();
-                            const currentFiles = getFilesData();
+                            const currentFolders = await getFoldersData();
+                            const currentFiles = await getFilesData();
                             
                             const mergedFolders = { ...currentFolders, ...importedData.folders };
                             const mergedFiles = [...currentFiles, ...importedData.files];
                             
-                            saveData(mergedFolders, mergedFiles);
+                            await saveData(mergedFolders, mergedFiles);
                             
                             showAlert('✅ Legacy data imported and merged!', 'success');
                         }
@@ -2371,7 +2380,7 @@ Current Token: ${tokenPreview}
                             const folderFiles = githubFiles.filter(f => f.folder === deleteItem.name);
                             
                             for (const file of folderFiles) {
-                                await deleteFileFromGitHub(file);
+                                await deleteFileInfoFromGitHub(file);
                             }
                         } catch (error) {
                             console.warn('Failed to delete from GitHub:', error);
@@ -2431,7 +2440,7 @@ Current Token: ${tokenPreview}
                             const targetFile = githubFiles.find(f => f.id === deleteItem.fileId);
                             
                             if (targetFile) {
-                                await deleteFileFromGitHub(targetFile);
+                                await deleteFileInfoFromGitHub(targetFile);
                             }
                         } catch (error) {
                             console.warn('Failed to delete from GitHub:', error);
