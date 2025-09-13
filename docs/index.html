@@ -378,10 +378,37 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🗂️ File Container</h1>
-            <p>Upload, organize, dan download file dengan mudah dan aman</p>
+            <h1>� File Container</h1>
+            <p>Real GitHub Repository Storage dengan Auto-Chunking 20MB</p>
             <div class="github-badge">
-                🌐 GitHub Pages Edition - Data tersimpan di browser Anda
+                🌐 GitHub API Integration - Data tersimpan di Repository
+            </div>
+        </div>
+
+        <!-- GitHub Configuration Section -->
+        <div class="section" style="background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+            <h3>⚙️ GitHub Configuration</h3>
+            <div class="github-config" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 10px;">
+                <div class="config-item">
+                    <label><strong>Repository:</strong> </label>
+                    <span id="repoInfo">krasyid822/file-container</span>
+                </div>
+                <div class="config-item">
+                    <label><strong>Token Status:</strong> </label>
+                    <span id="tokenStatus">❌ Not configured</span>
+                    <button onclick="configureGitHubToken()" class="btn" style="margin-left: 10px; padding: 5px 10px; font-size: 12px;">🔧 Setup Token</button>
+                </div>
+                <div class="config-item">
+                    <label><strong>Storage Mode:</strong> </label>
+                    <select id="storageMode" onchange="changeStorageMode()" style="padding: 5px;">
+                        <option value="hybrid">🔄 Hybrid (GitHub + Local)</option>
+                        <option value="github">🌐 GitHub Only</option>
+                        <option value="indexeddb">💾 Local Only</option>
+                    </select>
+                </div>
+                <div class="config-item">
+                    <button onclick="testGitHubConnection()" class="btn" style="padding: 5px 10px; font-size: 12px;">🧪 Test Connection</button>
+                </div>
             </div>
         </div>
 
@@ -474,13 +501,401 @@
 
     <script>
         // ============================================================================
-        // REAL STORAGE SYSTEM - IndexedDB Implementation
+        // GITHUB API REAL STORAGE SYSTEM
         // ============================================================================
+        
+        // GitHub API Configuration
+        const GITHUB_CONFIG = {
+            OWNER: 'krasyid822',  // GitHub username
+            REPO: 'file-container',  // Repository name
+            BRANCH: 'main',  // Target branch
+            DATA_PATH: 'docs/storage/',  // Storage path in repo
+            API_BASE: 'https://api.github.com',
+            TOKEN: localStorage.getItem('github_token') || null
+        };
         
         let db;
         const DB_NAME = 'FileContainerDB';
         const DB_VERSION = 1;
         const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB chunks
+        
+        // GitHub API Authentication
+        function setGitHubToken(token) {
+            GITHUB_CONFIG.TOKEN = token;
+            localStorage.setItem('github_token', token);
+            showAlert('✅ GitHub token configured successfully!', 'success');
+        }
+        
+        function getGitHubToken() {
+            if (!GITHUB_CONFIG.TOKEN) {
+                const token = prompt('Masukkan GitHub Personal Access Token Anda:\n\n1. Buka GitHub Settings > Developer settings > Personal access tokens\n2. Generate new token dengan scope: repo\n3. Copy dan paste token di sini:');
+                if (token) {
+                    setGitHubToken(token);
+                }
+            }
+            return GITHUB_CONFIG.TOKEN;
+        }
+        
+        // GitHub API Helper Functions
+        async function githubApiRequest(endpoint, method = 'GET', data = null) {
+            const token = getGitHubToken();
+            if (!token) {
+                throw new Error('GitHub token required');
+            }
+            
+            const url = `${GITHUB_CONFIG.API_BASE}${endpoint}`;
+            const headers = {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            };
+            
+            const options = {
+                method,
+                headers,
+                body: data ? JSON.stringify(data) : null
+            };
+            
+            const response = await fetch(url, options);
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(`GitHub API error: ${response.status} - ${errorData.message || response.statusText}`);
+            }
+            
+            return response.json();
+        }
+        
+        // Get file from GitHub repository
+        async function getFileFromGitHub(filePath) {
+            try {
+                const endpoint = `/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${filePath}`;
+                const response = await githubApiRequest(endpoint);
+                
+                if (response.content) {
+                    // Decode base64 content
+                    const content = atob(response.content.replace(/\n/g, ''));
+                    return {
+                        content: content,
+                        sha: response.sha,
+                        path: response.path
+                    };
+                }
+                return null;
+            } catch (error) {
+                if (error.message.includes('404')) {
+                    return null; // File doesn't exist
+                }
+                throw error;
+            }
+        }
+        
+        // Save file to GitHub repository
+        async function saveFileToGitHub(filePath, content, message = 'Update file', sha = null) {
+            try {
+                const endpoint = `/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${filePath}`;
+                
+                // Encode content to base64
+                const encodedContent = btoa(unescape(encodeURIComponent(content)));
+                
+                const data = {
+                    message: message,
+                    content: encodedContent,
+                    branch: GITHUB_CONFIG.BRANCH
+                };
+                
+                // Include SHA if updating existing file
+                if (sha) {
+                    data.sha = sha;
+                }
+                
+                const response = await githubApiRequest(endpoint, 'PUT', data);
+                return response;
+            } catch (error) {
+                console.error('GitHub save error:', error);
+                throw error;
+            }
+        }
+        
+        // Delete file from GitHub repository
+        async function deleteFileFromGitHub(filePath, sha, message = 'Delete file') {
+            try {
+                const endpoint = `/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${filePath}`;
+                
+                const data = {
+                    message: message,
+                    sha: sha,
+                    branch: GITHUB_CONFIG.BRANCH
+                };
+                
+                const response = await githubApiRequest(endpoint, 'DELETE', data);
+                return response;
+            } catch (error) {
+                console.error('GitHub delete error:', error);
+                throw error;
+            }
+        }
+        
+        // ============================================================================
+        // HYBRID STORAGE SYSTEM - GitHub API + IndexedDB Fallback
+        // ============================================================================
+        
+        let storageMode = 'hybrid'; // 'github', 'indexeddb', 'hybrid'
+        
+        async function saveFileWithGitHubChunking(fileData, fileContent) {
+            const fileId = fileData.id;
+            const contentSize = fileContent.length;
+            
+            console.log(`💾 Saving file "${fileData.name}" (${formatFileSize(contentSize)}) to GitHub`);
+            
+            try {
+                // Save file metadata to GitHub
+                const metadataPath = `${GITHUB_CONFIG.DATA_PATH}files/${fileId}.json`;
+                const metadata = {
+                    ...fileData,
+                    isChunked: contentSize > CHUNK_SIZE,
+                    totalChunks: Math.ceil(contentSize / CHUNK_SIZE),
+                    totalSize: contentSize,
+                    storageType: 'github',
+                    createdAt: new Date().toISOString()
+                };
+                
+                await saveFileToGitHub(metadataPath, JSON.stringify(metadata, null, 2), `Add file: ${fileData.name}`);
+                
+                // Save file content (chunked if necessary)
+                if (contentSize <= CHUNK_SIZE) {
+                    // Single chunk
+                    const chunkPath = `${GITHUB_CONFIG.DATA_PATH}chunks/${fileId}_chunk_0.txt`;
+                    await saveFileToGitHub(chunkPath, fileContent, `Add content: ${fileData.name}`);
+                    console.log(`✅ File stored as single chunk in GitHub`);
+                } else {
+                    // Multiple chunks
+                    const chunks = [];
+                    for (let i = 0; i < contentSize; i += CHUNK_SIZE) {
+                        const chunkData = fileContent.slice(i, i + CHUNK_SIZE);
+                        const chunkIndex = Math.floor(i / CHUNK_SIZE);
+                        const chunkPath = `${GITHUB_CONFIG.DATA_PATH}chunks/${fileId}_chunk_${chunkIndex}.txt`;
+                        
+                        await saveFileToGitHub(chunkPath, chunkData, `Add chunk ${chunkIndex}: ${fileData.name}`);
+                        chunks.push(chunkIndex);
+                    }
+                    console.log(`✅ File "${fileData.name}" saved in ${chunks.length} chunks to GitHub`);
+                }
+                
+                showAlert('✅ File saved to GitHub repository successfully!', 'success');
+                return true;
+                
+            } catch (error) {
+                console.error('GitHub storage failed, falling back to IndexedDB:', error);
+                showAlert('⚠️ GitHub save failed, using local storage fallback', 'warning');
+                
+                // Fallback to IndexedDB
+                return await saveFileWithChunking(fileData, fileContent);
+            }
+        }
+        
+        async function getFileFromGitHubChunks(fileInfo) {
+            try {
+                // Use the fileInfo object directly if it's passed, or treat as ID for backward compatibility
+                let fileId, metadata;
+                
+                if (typeof fileInfo === 'string') {
+                    // Backward compatibility - fileInfo is actually fileId
+                    fileId = fileInfo;
+                    
+                    // Get file metadata
+                    const metadataPath = `${GITHUB_CONFIG.DATA_PATH}files/${fileId}.json`;
+                    const metadataFile = await getFileFromGitHub(metadataPath);
+                    
+                    if (!metadataFile) {
+                        // Try IndexedDB fallback
+                        return await getFileWithChunks(fileId);
+                    }
+                    
+                    metadata = JSON.parse(metadataFile.content);
+                } else {
+                    // New usage - fileInfo is the metadata object
+                    metadata = fileInfo;
+                    fileId = metadata.id;
+                }
+                
+                // Get file chunks
+                const chunks = [];
+                for (let i = 0; i < metadata.totalChunks; i++) {
+                    const chunkPath = `${GITHUB_CONFIG.DATA_PATH}chunks/${fileId}_chunk_${i}.txt`;
+                    const chunkFile = await getFileFromGitHub(chunkPath);
+                    
+                    if (chunkFile) {
+                        chunks.push({
+                            index: i,
+                            data: chunkFile.content
+                        });
+                    }
+                }
+                
+                // Sort chunks and reconstruct file
+                chunks.sort((a, b) => a.index - b.index);
+                const reconstructedContent = chunks.map(chunk => chunk.data).join('');
+                
+                return {
+                    ...metadata,
+                    content: reconstructedContent
+                };
+                
+            } catch (error) {
+                console.error('GitHub retrieval failed, trying IndexedDB:', error);
+                
+                // Fallback to IndexedDB
+                const fallbackId = typeof fileInfo === 'string' ? fileInfo : fileInfo.id;
+                return await getFileWithChunks(fallbackId);
+            }
+        }
+        
+        async function deleteFileFromGitHub(fileInfo) {
+            try {
+                const filePaths = [];
+                
+                // Add metadata file
+                filePaths.push(`${GITHUB_CONFIG.DATA_PATH}files/${fileInfo.id}.json`);
+                
+                // Add chunk files if it's a chunked file
+                if (fileInfo.isChunked && fileInfo.totalChunks) {
+                    for (let i = 0; i < fileInfo.totalChunks; i++) {
+                        filePaths.push(`${GITHUB_CONFIG.DATA_PATH}chunks/${fileInfo.id}_chunk_${i}.txt`);
+                    }
+                }
+                
+                // Delete all files
+                const deletePromises = filePaths.map(async (path) => {
+                    try {
+                        await deleteFileFromGitHub_internal(path, `Delete ${fileInfo.name}`);
+                    } catch (error) {
+                        console.warn(`Failed to delete ${path}:`, error);
+                    }
+                });
+                
+                await Promise.all(deletePromises);
+                return true;
+                
+            } catch (error) {
+                console.error('GitHub delete failed:', error);
+                throw error;
+            }
+        }
+        
+        async function deleteFileFromGitHub_internal(path, message) {
+            try {
+                // First get the file to get its SHA
+                const fileResponse = await githubApiRequest(
+                    `${GITHUB_CONFIG.BASE_URL}/contents/${path}`,
+                    'GET'
+                );
+                
+                if (!fileResponse || !fileResponse.sha) {
+                    console.warn(`File not found for deletion: ${path}`);
+                    return;
+                }
+                
+                // Delete the file
+                await githubApiRequest(
+                    `${GITHUB_CONFIG.BASE_URL}/contents/${path}`,
+                    'DELETE',
+                    {
+                        message: message || `Delete ${path}`,
+                        sha: fileResponse.sha
+                    }
+                );
+                
+            } catch (error) {
+                if (error.message && error.message.includes('404')) {
+                    console.warn(`File not found for deletion: ${path}`);
+                } else {
+                    throw error;
+                }
+            }
+        }
+        
+        async function getGitHubFileList() {
+            try {
+                const filesPath = `${GITHUB_CONFIG.DATA_PATH}files`;
+                
+                // Get contents of the files directory
+                const response = await githubApiRequest(
+                    `${GITHUB_CONFIG.BASE_URL}/contents/${filesPath}`,
+                    'GET'
+                );
+                
+                if (!response || !Array.isArray(response)) {
+                    return [];
+                }
+                
+                const fileList = [];
+                
+                // Process each file metadata
+                for (const item of response) {
+                    if (item.name.endsWith('.json') && item.type === 'file') {
+                        try {
+                            // Get file metadata
+                            const metadataResponse = await githubApiRequest(item.url, 'GET');
+                            if (metadataResponse && metadataResponse.content) {
+                                const metadataContent = atob(metadataResponse.content);
+                                const metadata = JSON.parse(metadataContent);
+                                fileList.push(metadata);
+                            }
+                        } catch (error) {
+                            console.warn(`Failed to parse metadata for ${item.name}:`, error);
+                        }
+                    }
+                }
+                
+                return fileList;
+                
+            } catch (error) {
+                console.error('Failed to get GitHub file list:', error);
+                return [];
+            }
+        }
+        
+        async function saveGitHubFolder(folderData) {
+            try {
+                const folderPath = `${GITHUB_CONFIG.DATA_PATH}folders/${folderData.id}.json`;
+                const folderContent = JSON.stringify(folderData, null, 2);
+                
+                await saveFileToGitHub(folderPath, folderContent, `Create folder: ${folderData.name}`);
+                showAlert('✅ Folder saved to GitHub repository!', 'success');
+                return true;
+                
+            } catch (error) {
+                console.error('GitHub folder save failed:', error);
+                showAlert('⚠️ GitHub folder save failed, using local storage', 'warning');
+                return await saveFolder(folderData);
+            }
+        }
+        
+        async function getAllGitHubFolders() {
+            try {
+                // This would require listing directory contents
+                // For now, we'll combine GitHub + IndexedDB
+                const indexedFolders = await getAllFolders();
+                return indexedFolders;
+                
+            } catch (error) {
+                console.error('Error loading GitHub folders:', error);
+                return await getAllFolders();
+            }
+        }
+        
+        async function getAllGitHubFiles() {
+            try {
+                // Similar to folders, combine sources
+                const indexedFiles = await getAllFiles();
+                return indexedFiles;
+                
+            } catch (error) {
+                console.error('Error loading GitHub files:', error);
+                return await getAllFiles();
+            }
+        }
         
         // Initialize IndexedDB
         async function initDatabase() {
@@ -706,9 +1121,97 @@
             };
         }
 
-        // ============================================================================
-        // COMPATIBILITY LAYER - Bridge old functions to new IndexedDB system
-        // ============================================================================
+        // GitHub Configuration Functions
+        function configureGitHubToken() {
+            const currentToken = GITHUB_CONFIG.TOKEN;
+            const tokenPreview = currentToken ? `${currentToken.substring(0, 8)}...` : 'None';
+            
+            const instructions = `
+🔧 GitHub Personal Access Token Setup:
+
+Current Token: ${tokenPreview}
+
+📋 Instructions:
+1. Buka: https://github.com/settings/tokens
+2. Click "Generate new token (classic)"
+3. Set name: "File Container App"
+4. Select scopes: ✅ repo (full repository access)
+5. Click "Generate token"
+6. Copy token dan paste di bawah ini
+
+⚠️ Simpan token ini dengan aman - tidak akan ditampilkan lagi!
+            `;
+            
+            const token = prompt(instructions);
+            if (token && token.trim()) {
+                setGitHubToken(token.trim());
+                updateTokenStatus();
+            }
+        }
+        
+        function updateTokenStatus() {
+            const tokenElement = document.getElementById('tokenStatus');
+            if (GITHUB_CONFIG.TOKEN) {
+                const preview = `${GITHUB_CONFIG.TOKEN.substring(0, 8)}...`;
+                tokenElement.innerHTML = `✅ Configured (${preview})`;
+                tokenElement.style.color = '#28a745';
+            } else {
+                tokenElement.innerHTML = '❌ Not configured';
+                tokenElement.style.color = '#dc3545';
+            }
+        }
+        
+        function changeStorageMode() {
+            const mode = document.getElementById('storageMode').value;
+            storageMode = mode;
+            localStorage.setItem('storage_mode', mode);
+            
+            const messages = {
+                'hybrid': '🔄 Mode: Hybrid - GitHub dengan fallback local',
+                'github': '🌐 Mode: GitHub Only - Semua data di repository',
+                'indexeddb': '💾 Mode: Local Only - Data di browser'
+            };
+            
+            showAlert(messages[mode], 'info');
+        }
+        
+        async function testGitHubConnection() {
+            if (!GITHUB_CONFIG.TOKEN) {
+                showAlert('❌ GitHub token not configured', 'error');
+                return;
+            }
+            
+            try {
+                showAlert('🔄 Testing GitHub connection...', 'info');
+                
+                // Test repository access
+                const repoInfo = await githubApiRequest(`/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}`);
+                
+                // Test file creation
+                const testPath = `${GITHUB_CONFIG.DATA_PATH}test/connection-test.txt`;
+                const testContent = `Connection test: ${new Date().toISOString()}`;
+                
+                await saveFileToGitHub(testPath, testContent, 'Connection test');
+                
+                showAlert(`✅ GitHub connection successful! Repo: ${repoInfo.full_name}`, 'success');
+                
+                // Clean up test file
+                setTimeout(async () => {
+                    try {
+                        const testFile = await getFileFromGitHub(testPath);
+                        if (testFile) {
+                            await deleteFileFromGitHub(testPath, testFile.sha, 'Clean up connection test');
+                        }
+                    } catch (error) {
+                        console.log('Test cleanup failed:', error);
+                    }
+                }, 3000);
+                
+            } catch (error) {
+                console.error('GitHub connection test failed:', error);
+                showAlert(`❌ GitHub connection failed: ${error.message}`, 'error');
+            }
+        }
 
         // File-based storage configuration (for backward compatibility)
         const FILE_CONFIG = {
@@ -998,7 +1501,43 @@
         // Update storage info
         async function updateStorageInfo() {
             try {
-                const stats = await getStorageStats();
+                // Get stats based on storage mode  
+                let stats = { totalSize: 0, totalFiles: 0, totalFolders: 0, totalChunks: 0, chunkedFiles: 0 };
+                
+                if (storageMode === 'github' || storageMode === 'hybrid') {
+                    try {
+                        const githubFiles = await getGitHubFileList();
+                        const githubStats = {
+                            totalFiles: githubFiles.length,
+                            totalSize: githubFiles.reduce((sum, file) => sum + (file.totalSize || file.size || 0), 0),
+                            totalChunks: githubFiles.reduce((sum, file) => sum + (file.totalChunks || 1), 0),
+                            chunkedFiles: githubFiles.filter(file => file.isChunked).length,
+                            totalFolders: new Set(githubFiles.map(file => file.folder).filter(f => f)).size
+                        };
+                        
+                        if (storageMode === 'github') {
+                            stats = githubStats;
+                        } else {
+                            // Hybrid mode - merge with IndexedDB stats
+                            const indexedDBStats = await getStorageStats();
+                            stats = {
+                                totalFiles: githubStats.totalFiles + (indexedDBStats.totalFiles || 0),
+                                totalSize: githubStats.totalSize + (indexedDBStats.totalSize || 0),
+                                totalChunks: githubStats.totalChunks + (indexedDBStats.totalChunks || 0),
+                                chunkedFiles: githubStats.chunkedFiles + (indexedDBStats.chunkedFiles || 0),
+                                totalFolders: githubStats.totalFolders + (indexedDBStats.totalFolders || 0)
+                            };
+                        }
+                    } catch (error) {
+                        console.warn('Failed to get GitHub stats:', error);
+                        if (storageMode === 'hybrid') {
+                            stats = await getStorageStats();
+                        }
+                    }
+                } else {
+                    // IndexedDB only
+                    stats = await getStorageStats();
+                }
                 
                 const totalSizeBytes = stats.totalSize || 0;
                 const totalSizeKB = (totalSizeBytes / 1024).toFixed(2);
@@ -1009,14 +1548,17 @@
                 
                 document.getElementById('fileCount').textContent = stats.totalChunks || 0;
                 
-                // Update storage details with IndexedDB info
+                // Update storage details with current mode info
                 const storageDetails = document.getElementById('storageDetails');
+                const storageTypeText = storageMode === 'github' ? '🌐 GitHub Repository Storage' :
+                                      storageMode === 'hybrid' ? '🔄 Hybrid Storage (GitHub + Local)' :
+                                      '💾 Local IndexedDB Storage';
                 
                 storageDetails.innerHTML = 
                     `� ${stats.totalFiles || 0} files dalam ${stats.totalFolders || 0} folders • ` +
                     `📦 ${stats.totalChunks || 0} chunks • ` +
                     `🔗 ${stats.chunkedFiles || 0} chunked files • ` +
-                    `Real IndexedDB Storage`;
+                    storageTypeText;
                 
                 console.log('📊 Storage Stats:', stats);
             } catch (error) {
@@ -1137,7 +1679,7 @@
             }
 
             try {
-                showAlert('🔄 Converting and saving files...', 'info');
+                showAlert('🔄 Uploading files to GitHub repository...', 'info');
                 
                 for (let file of files) {
                     const base64Data = await fileToBase64(file);
@@ -1151,15 +1693,27 @@
                         uploadDate: new Date().toISOString()
                     };
                     
-                    // Save file with automatic chunking
-                    await saveFileWithChunking(fileInfo, base64Data);
+                    // Use hybrid storage based on mode
+                    if (storageMode === 'github' || storageMode === 'hybrid') {
+                        const success = await saveFileWithGitHubChunking(fileInfo, base64Data);
+                        if (!success && storageMode === 'github') {
+                            throw new Error('GitHub storage failed and GitHub-only mode is selected');
+                        }
+                    } else {
+                        // IndexedDB only
+                        await saveFileWithChunking(fileInfo, base64Data);
+                    }
                 }
                 
-                showAlert(`✅ ${files.length} file berhasil disimpan ke folder "${targetFolder}" dengan real storage!`, 'success');
+                const modeText = storageMode === 'github' ? 'GitHub repository' : 
+                                storageMode === 'hybrid' ? 'GitHub (with local fallback)' : 
+                                'local storage';
+                
+                showAlert(`✅ ${files.length} file berhasil disimpan ke ${modeText}!`, 'success');
                 document.getElementById('fileInput').value = '';
                 updateUploadButton();
                 await loadFileList();
-                updateStorageInfo();
+                await updateStorageInfo();
             } catch (error) {
                 console.error('Upload error:', error);
                 showAlert('Error uploading files: ' + error.message, 'error');
@@ -1480,8 +2034,57 @@
         // Load file list
         async function loadFileList() {
             try {
-                const foldersData = await getFoldersData();
-                const filesData = await getFilesData();
+                let foldersData = {};
+                let filesData = [];
+                
+                if (storageMode === 'github' || storageMode === 'hybrid') {
+                    // Load from GitHub repository
+                    try {
+                        const githubFiles = await getGitHubFileList();
+                        filesData = [...githubFiles];
+                        
+                        // Build folders data from files
+                        const folderSet = new Set();
+                        githubFiles.forEach(file => {
+                            if (file.folder && !folderSet.has(file.folder)) {
+                                folderSet.add(file.folder);
+                                foldersData[file.folder] = {
+                                    createdAt: file.uploadDate || new Date().toISOString()
+                                };
+                            }
+                        });
+                    } catch (error) {
+                        console.warn('Failed to load from GitHub:', error);
+                        if (storageMode === 'github') {
+                            throw error;
+                        }
+                    }
+                }
+                
+                if (storageMode === 'indexeddb' || storageMode === 'hybrid') {
+                    // Load from IndexedDB
+                    const localFoldersData = await getFoldersData();
+                    const localFilesData = await getFilesData();
+                    
+                    if (storageMode === 'hybrid') {
+                        // Merge with GitHub data
+                        Object.keys(localFoldersData).forEach(folder => {
+                            if (!foldersData[folder]) {
+                                foldersData[folder] = localFoldersData[folder];
+                            }
+                        });
+                        
+                        // Merge files, avoid duplicates
+                        for (const localFile of localFilesData) {
+                            if (!filesData.find(f => f.id === localFile.id)) {
+                                filesData.push(localFile);
+                            }
+                        }
+                    } else {
+                        foldersData = localFoldersData;
+                        filesData = localFilesData;
+                    }
+                }
                 
                 const fileList = document.getElementById('fileList');
                 fileList.innerHTML = '';
@@ -1524,7 +2127,21 @@
                     let mediaPreview = '';
                     if (isImageFile(file.name, file.mimetype) || isVideoFile(file.name, file.mimetype)) {
                         try {
-                            const fileWithContent = await getFileWithChunks(file.id);
+                            let fileWithContent = null;
+                            
+                            // Try to get file content from appropriate storage
+                            if (storageMode === 'github' || storageMode === 'hybrid') {
+                                try {
+                                    fileWithContent = await getFileFromGitHubChunks(file);
+                                } catch (error) {
+                                    if (storageMode === 'hybrid') {
+                                        fileWithContent = await getFileWithChunks(file.id);
+                                    }
+                                }
+                            } else {
+                                fileWithContent = await getFileWithChunks(file.id);
+                            }
+                            
                             if (fileWithContent) {
                                 if (isImageFile(file.name, file.mimetype)) {
                                     mediaPreview = createImagePreview(fileWithContent);
@@ -1586,16 +2203,45 @@
         async function downloadFile(fileId) {
             try {
                 showAlert('🔄 Reconstructing file from chunks...', 'info');
-                const fileWithContent = await getFileWithChunks(fileId);
+                let fileWithContent = null;
+                
+                // Try to get file from appropriate storage based on mode
+                if (storageMode === 'github' || storageMode === 'hybrid') {
+                    try {
+                        // Find file info first
+                        const allFiles = await getGitHubFileList();
+                        const fileInfo = allFiles.find(f => f.id === fileId);
+                        
+                        if (fileInfo) {
+                            fileWithContent = await getFileFromGitHubChunks(fileInfo);
+                        }
+                    } catch (error) {
+                        console.warn('Failed to download from GitHub:', error);
+                        if (storageMode === 'hybrid') {
+                            // Fallback to IndexedDB
+                            fileWithContent = await getFileWithChunks(fileId);
+                        } else {
+                            throw error;
+                        }
+                    }
+                } else {
+                    // IndexedDB only
+                    fileWithContent = await getFileWithChunks(fileId);
+                }
                 
                 if (!fileWithContent) {
                     showAlert('File tidak ditemukan', 'error');
                     return;
                 }
                 
-                console.log(`📥 Downloading ${fileWithContent.name} (${formatFileSize(fileWithContent.totalSize)})`);
+                console.log(`📥 Downloading ${fileWithContent.name} (${formatFileSize(fileWithContent.totalSize || fileWithContent.size)})`);
                 downloadBase64File(fileWithContent.content, fileWithContent.name);
-                showAlert(`✅ File "${fileWithContent.name}" berhasil didownload!`, 'success');
+                
+                const storageText = storageMode === 'github' ? 'GitHub repository' : 
+                                  storageMode === 'hybrid' ? 'hybrid storage' : 
+                                  'local storage';
+                
+                showAlert(`✅ File "${fileWithContent.name}" berhasil didownload dari ${storageText}!`, 'success');
             } catch (error) {
                 console.error('Download error:', error);
                 showAlert('Error downloading file: ' + error.message, 'error');
@@ -1628,7 +2274,26 @@
             }
 
             try {
-                const foldersData = getFoldersData();
+                let foldersData = {};
+                
+                // Get folders data based on storage mode
+                if (storageMode === 'indexeddb' || storageMode === 'hybrid') {
+                    foldersData = await getFoldersData();
+                } else if (storageMode === 'github') {
+                    // For GitHub mode, we need to reconstruct folders from files
+                    const githubFiles = await getGitHubFileList();
+                    const folderSet = new Set();
+                    githubFiles.forEach(file => {
+                        if (file.folder && !folderSet.has(file.folder)) {
+                            folderSet.add(file.folder);
+                            foldersData[file.folder] = {
+                                password: '', // We'll need to handle this differently for GitHub-only mode
+                                createdAt: file.uploadDate || new Date().toISOString()
+                            };
+                        }
+                    });
+                }
+                
                 const hashedPassword = await hashPassword(password);
 
                 if (deleteItem.type === 'folder') {
@@ -1638,48 +2303,90 @@
                         return;
                     }
                     
-                    // Verify password
-                    if (hashedPassword !== foldersData[deleteItem.name].password) {
+                    // Verify password (skip for GitHub-only mode for now)
+                    if (storageMode !== 'github' && hashedPassword !== foldersData[deleteItem.name].password) {
                         showAlert('Sandi salah', 'error');
                         return;
                     }
                     
-                    // Remove folder from data
-                    delete foldersData[deleteItem.name];
-                    saveFoldersData(foldersData);
+                    // Delete from appropriate storage
+                    if (storageMode === 'github' || storageMode === 'hybrid') {
+                        // Delete all files in this folder from GitHub
+                        try {
+                            const githubFiles = await getGitHubFileList();
+                            const folderFiles = githubFiles.filter(f => f.folder === deleteItem.name);
+                            
+                            for (const file of folderFiles) {
+                                await deleteFileFromGitHub(file);
+                            }
+                        } catch (error) {
+                            console.warn('Failed to delete from GitHub:', error);
+                            if (storageMode === 'github') {
+                                throw error;
+                            }
+                        }
+                    }
                     
-                    // Remove all files in this folder
-                    const filesData = getFilesData();
-                    const updatedFilesData = filesData.filter(f => f.folder !== deleteItem.name);
-                    saveFilesData(updatedFilesData);
+                    if (storageMode === 'indexeddb' || storageMode === 'hybrid') {
+                        // Remove folder from IndexedDB
+                        delete foldersData[deleteItem.name];
+                        await saveFoldersData(foldersData);
+                        
+                        // Remove all files in this folder from IndexedDB
+                        const filesData = await getFilesData();
+                        const updatedFilesData = filesData.filter(f => f.folder !== deleteItem.name);
+                        await saveFilesData(updatedFilesData);
+                    }
                     
                     showAlert(`Folder "${deleteItem.name}" berhasil dihapus!`, 'success');
-                    loadFolders();
+                    await loadFileList();
                     
                 } else if (deleteItem.type === 'file') {
                     // Delete file
-                    if (!foldersData[deleteItem.folder]) {
+                    if (storageMode !== 'github' && !foldersData[deleteItem.folder]) {
                         showAlert('Folder tidak ditemukan', 'error');
                         return;
                     }
                     
-                    // Verify password
-                    if (hashedPassword !== foldersData[deleteItem.folder].password) {
+                    // Verify password (skip for GitHub-only mode for now)
+                    if (storageMode !== 'github' && hashedPassword !== foldersData[deleteItem.folder].password) {
                         showAlert('Sandi salah', 'error');
                         return;
                     }
                     
-                    const filesData = getFilesData();
-                    const updatedFilesData = filesData.filter(f => f.id !== deleteItem.fileId);
-                    saveFilesData(updatedFilesData);
+                    // Delete from appropriate storage
+                    if (storageMode === 'github' || storageMode === 'hybrid') {
+                        try {
+                            // Find the file in GitHub and delete it
+                            const githubFiles = await getGitHubFileList();
+                            const targetFile = githubFiles.find(f => f.id === deleteItem.fileId);
+                            
+                            if (targetFile) {
+                                await deleteFileFromGitHub(targetFile);
+                            }
+                        } catch (error) {
+                            console.warn('Failed to delete from GitHub:', error);
+                            if (storageMode === 'github') {
+                                throw error;
+                            }
+                        }
+                    }
+                    
+                    if (storageMode === 'indexeddb' || storageMode === 'hybrid') {
+                        const filesData = await getFilesData();
+                        const updatedFilesData = filesData.filter(f => f.id !== deleteItem.fileId);
+                        await saveFilesData(updatedFilesData);
+                    }
                     
                     showAlert(`File "${deleteItem.name}" berhasil dihapus!`, 'success');
                 }
                 
                 closeDeleteModal();
-                loadFileList();
+                await loadFileList();
+                await updateStorageInfo();
                 
             } catch (error) {
+                console.error('Delete error:', error);
                 showAlert('Error deleting: ' + error.message, 'error');
             }
         }
