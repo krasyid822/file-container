@@ -2,6 +2,10 @@
 
 Web aplikasi untuk upload, download, dan mengelola file dengan sistem folder yang aman.
 
+Tersedia dalam **2 versi**:
+- 🖥️ **Server Version** - Node.js + Express (untuk hosting sendiri)
+- 🌐 **GitHub Pages Version** - Pure HTML/CSS/JS dengan localStorage
+
 ## ✨ Fitur
 
 - 📁 **Buat Folder Baru** dengan password keamanan
@@ -12,15 +16,32 @@ Web aplikasi untuk upload, download, dan mengelola file dengan sistem folder yan
 - 📱 **Responsive Design** - bekerja di desktop dan mobile
 - 🎯 **Drag & Drop** support untuk upload file
 - 💾 **JSON Storage** untuk metadata file
+- 📤 **Export/Import Data** (GitHub Pages version)
+- 🌐 **Deploy ke GitHub Pages** (static version)
 
 ## 🚀 Cara Menjalankan
 
-### 1. Install Dependencies
+### 🌐 GitHub Pages Version (Direkomendasikan)
+
+**Live Demo**: [Demo GitHub Pages](https://yourusername.github.io/file-container/)
+
+1. **Fork repository ini**
+2. **Enable GitHub Pages**:
+   - Buka Settings → Pages
+   - Source: Deploy from a branch
+   - Branch: main/master
+   - Folder: /docs
+   - Save
+3. **Akses di**: `https://yourusername.github.io/file-container/`
+
+### 🖥️ Server Version (Local Development)
+
+#### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-### 2. Jalankan Server
+#### 2. Jalankan Server
 ```bash
 npm start
 ```
@@ -30,22 +51,39 @@ Atau untuk development mode:
 npm run dev
 ```
 
-### 3. Buka Browser
+#### 3. Buka Browser
 Buka browser dan kunjungi: `http://localhost:3000`
 
 ## 📁 Struktur Folder
 
 ```
 file-container/
-├── index.html          # Frontend interface
-├── server.js           # Backend server
+├── index.html          # Server version frontend
+├── server.js           # Backend server (Node.js)
 ├── package.json        # Dependencies
-├── uploads/            # Folder untuk menyimpan file upload
-├── data/               # Folder untuk menyimpan metadata JSON
+├── uploads/            # Folder untuk menyimpan file upload (server version)
+├── data/               # Folder untuk menyimpan metadata JSON (server version)
 │   ├── folders.json    # Data folder dan password
 │   └── files.json      # Metadata file yang diupload
-└── README.md          # Dokumentasi
+├── docs/               # GitHub Pages version
+│   ├── index.html      # GitHub Pages main file
+│   └── README.md       # GitHub Pages documentation
+├── .nojekyll          # GitHub Pages config
+└── README.md          # Dokumentasi utama
 ```
+
+## 🌐 GitHub Pages vs Server Version
+
+| Fitur | GitHub Pages | Server Version |
+|-------|-------------|----------------|
+| **Hosting** | ✅ Free (GitHub) | ❌ Perlu server sendiri |
+| **Setup** | ✅ Mudah | ⚠️ Perlu install Node.js |
+| **Storage** | ⚠️ Browser only (~5-10MB) | ✅ Server disk |
+| **File Size** | ⚠️ Max ~2MB per file | ✅ Max 100MB per file |
+| **Persistence** | ⚠️ Per browser | ✅ Permanent |
+| **Multi-User** | ❌ Local only | ✅ Multiple users |
+| **Backup** | ✅ Export/Import | ✅ Server backup |
+| **Performance** | ✅ Fast (client-side) | ⚠️ Depends on server |
 
 ## 🎯 Cara Penggunaan
 
@@ -108,7 +146,47 @@ file-container/
 - `GET /api/download` - Download file
 - `DELETE /api/delete` - Hapus file/folder
 
-## 🔧 Development
+## �️ Deployment
+
+### 🌐 Deploy ke GitHub Pages
+
+1. **Fork/Clone repository**
+2. **Push ke GitHub repository Anda**
+3. **Enable GitHub Pages**:
+   ```
+   Settings → Pages → Source: Deploy from a branch
+   Branch: main/master → Folder: /docs → Save
+   ```
+4. **Akses aplikasi** di: `https://username.github.io/repository-name/`
+
+### 🖥️ Deploy Server Version
+
+#### Heroku
+```bash
+# Install Heroku CLI
+npm install -g heroku
+
+# Login dan deploy
+heroku login
+heroku create your-app-name
+git push heroku main
+```
+
+#### VPS/Server
+```bash
+# Clone repository
+git clone your-repo-url
+cd file-container
+
+# Install dependencies
+npm install
+
+# Start dengan PM2
+npm install -g pm2
+pm2 start server.js --name "file-container"
+```
+
+## �🔧 Development
 
 Untuk development, gunakan:
 ```bash

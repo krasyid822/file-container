@@ -1,0 +1,19 @@
+🎉 Selamat datang di File Container!
+
+Ini adalah demo file untuk menguji aplikasi.
+
+## Fitur yang bisa dicoba:
+
+1. 📁 Buat folder baru dengan password
+2. 📤 Upload file ini ke folder yang dibuat
+3. 📥 Download file kembali
+4. 🗑️ Hapus file dengan password
+5. 📤 Export data untuk backup
+6. 📥 Import data untuk restore
+
+## Tips:
+- Gunakan password yang mudah diingat untuk testing
+- File ini berukuran kecil, cocok untuk testing
+- Coba upload berbagai jenis file
+
+Terima kasih telah menggunakan File Container! 🚀

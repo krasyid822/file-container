@@ -40,8 +40,34 @@ temp/
 ehthumbs.db
 Thumbs.db
 
-# Uploaded files (optional - comment out if you want to track uploaded files)
-# uploads/
+# Server version uploaded files (optional - comment out if you want to track uploaded files)
+uploads/*
+!uploads/.gitkeep
 
-# Data files (optional - comment out if you want to track data files)
-# data/
+# Server version data files (optional - comment out if you want to track data files)
+data/*
+!data/.gitkeep
+
+# Build outputs
+dist/
+build/
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
