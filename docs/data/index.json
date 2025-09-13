@@ -1,0 +1,18 @@
+{
+  "version": "2.0",
+  "lastUpdate": "2025-09-13T00:00:00.000Z",
+  "dataFiles": [
+    {
+      "filename": "files-001.json",
+      "fileNumber": 1,
+      "currentSize": 0,
+      "maxSize": 20971520,
+      "active": true,
+      "created": "2025-09-13T00:00:00.000Z"
+    }
+  ],
+  "totalDataFiles": 1,
+  "totalFolders": 0,
+  "totalFiles": 0,
+  "totalSizeBytes": 0
+}

@@ -15,7 +15,10 @@ Tersedia dalam **2 versi**:
 - 🔒 **Keamanan Folder** - hanya yang tahu password yang bisa menghapus
 - 📱 **Responsive Design** - bekerja di desktop dan mobile
 - 🎯 **Drag & Drop** support untuk upload file
-- 💾 **JSON Storage** untuk metadata file
+- 💾 **JSON File Storage** - data tersimpan sebagai file JSON repository
+- ♾️ **Unlimited Storage** - kapasitas tidak terbatas dengan auto-splitting
+- 🔄 **Auto-Split** - file JSON otomatis dipecah saat mencapai 20MB
+- 🌍 **Cross-Device Access** - data tersedia di semua perangkat
 - 📤 **Export/Import Data** (GitHub Pages version)
 - 🌐 **Deploy ke GitHub Pages** (static version)
 
@@ -67,10 +70,47 @@ file-container/
 │   └── files.json      # Metadata file yang diupload
 ├── docs/               # GitHub Pages version
 │   ├── index.html      # GitHub Pages main file
+│   ├── data/          # JSON File Storage
+│   │   ├── index.json      # Master index of all data files
+│   │   ├── files-001.json  # First data file (≤20MB)
+│   │   ├── files-002.json  # Second data file (auto-created)
+│   │   └── README.md       # Technical documentation
 │   └── README.md       # GitHub Pages documentation
 ├── .nojekyll          # GitHub Pages config
 └── README.md          # Dokumentasi utama
 ```
+
+## 💾 JSON File Storage Technology
+
+### 🎯 Unlimited Storage Revolution
+
+GitHub Pages version menggunakan **JSON File Storage System**:
+
+- **🗄️ Repository-based Storage**: Data tersimpan sebagai file JSON di repository
+- **🔄 Auto-Splitting**: File JSON otomatis dipecah ketika mencapai 20MB  
+- **♾️ Unlimited Capacity**: Tidak terbatas oleh browser storage limits
+- **🌍 Cross-Device Sync**: Data tersedia di semua perangkat
+- **📊 Version Control**: Semua perubahan ter-track oleh Git
+- **⚡ Global CDN**: Fast access melalui GitHub Pages worldwide
+
+### 📊 Storage Structure
+
+```
+docs/data/
+├── index.json           # Master index tracking all data files
+├── files-001.json       # First data file (≤20MB)
+├── files-002.json       # Second data file (auto-created when needed)
+├── files-003.json       # Third data file (auto-created when needed)
+└── files-XXX.json       # Additional files as storage scales
+```
+
+### ⚠️ Demo Mode Notice
+
+**GitHub Pages Read-Only Limitation**:
+- ✅ **Load Data**: Membaca semua data dari JSON files
+- ✅ **UI Updates**: Perubahan tampil real-time di browser  
+- ⚠️ **Save Data**: Demo mode - perubahan tidak persisten
+- 💡 **Production**: Butuh backend service atau GitHub API integration
 
 ## 🌐 GitHub Pages vs Server Version
 
@@ -78,14 +118,14 @@ file-container/
 |-------|-------------|----------------|
 | **Hosting** | ✅ Free (GitHub) | ❌ Perlu server sendiri |
 | **Setup** | ✅ Mudah | ⚠️ Perlu install Node.js |
-| **Storage** | ✅ JSON Chunks (~25MB+) | ✅ Server disk |
-| **File Size** | ✅ Support hingga 25MB | ✅ Max 100MB per file |
-| **Persistence** | ✅ Browser storage | ✅ Permanent |
-| **Multi-User** | ❌ Local only | ✅ Multiple users |
-| **Backup** | ✅ Chunked export/import | ✅ Server backup |
-| **Performance** | ✅ Fast chunked loading | ⚠️ Depends on server |
+| **Storage** | ✅ JSON Files (Unlimited) | ✅ Server disk |
+| **File Size** | ✅ Support unlimited dengan auto-split | ✅ Max 100MB per file |
+| **Persistence** | ✅ JSON repository files | ✅ Permanent |
+| **Multi-Device** | ✅ Cross-device access | ❌ Server only |
+| **Backup** | ✅ Git version control | ✅ Server backup |
+| **Performance** | ✅ Global CDN (GitHub) | ⚠️ Depends on server |
 | **Auto-Split** | ✅ 20MB auto chunking | ❌ Not needed |
-| **Optimization** | ✅ Auto duplicate removal | ❌ Manual |
+| **Scalability** | ✅ Unlimited auto-scaling | ⚠️ Server capacity |
 
 ## 🎯 Cara Penggunaan
 

@@ -365,19 +365,18 @@
             <!-- Storage Info -->
             <div class="storage-info">
                 <div>
-                    <strong>💾 JSON Storage:</strong> 
-                    <span id="storageUsed">0 KB</span> / ~25 MB limit
-                    <span id="chunkInfo"></span>
+                    <strong>💾 JSON File Storage:</strong> 
+                    <span id="storageUsed">0 KB</span> across <span id="fileCount">0</span> data files
                 </div>
                 <div class="storage-bar">
                     <div class="storage-fill" id="storageFill"></div>
                 </div>
                 <div id="storageDetails" style="font-size: 12px; margin-top: 8px; color: #666;"></div>
                 <div class="data-management">
-                    <button class="btn btn-warning" onclick="exportData()">📤 Export Data</button>
+                    <button class="btn btn-warning" onclick="exportAllData()">📤 Export All Data</button>
                     <button class="btn btn-success" onclick="document.getElementById('importFile').click()">📥 Import Data</button>
-                    <button class="btn btn-danger" onclick="clearAllData()">🗑️ Clear All Data</button>
-                    <button class="btn" onclick="optimizeStorage()">🔧 Optimize Storage</button>
+                    <button class="btn" onclick="refreshDataFiles()">� Refresh Data</button>
+                    <button class="btn" onclick="showDataFilesList()">� Show Data Files</button>
                     <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importData(event)">
                 </div>
             </div>
@@ -414,8 +413,8 @@
                 <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
                     <div class="upload-icon">📤</div>
                     <p><strong>Klik untuk memilih file</strong> atau drag & drop file ke sini</p>
-                    <p style="color: #666; margin-top: 10px;">File disimpan sebagai JSON dengan auto-splitting</p>
-                    <p style="color: #20bf6b; margin-top: 5px; font-size: 0.9em;">✅ Support file hingga 25MB dengan sistem chunk</p>
+                    <p style="color: #666; margin-top: 10px;">File disimpan sebagai JSON dengan auto-splitting per 20MB</p>
+                    <p style="color: #20bf6b; margin-top: 5px; font-size: 0.9em;">✅ Unlimited storage dengan multiple JSON files</p>
                 </div>
                 <input type="file" id="fileInput" multiple style="display: none;">
                 <button class="btn" onclick="uploadFiles()" id="uploadBtn" style="margin-top: 15px;" disabled>📤 Upload File</button>
@@ -447,214 +446,254 @@
     </div>
 
     <script>
-        // Storage configuration
-        const STORAGE_CONFIG = {
-            MAX_CHUNK_SIZE: 20 * 1024 * 1024, // 20MB in bytes
-            CHUNK_PREFIX: 'fileContainer_chunk_',
-            META_KEY: 'fileContainer_meta',
-            FOLDERS_KEY: 'fileContainer_folders'
-        };
-
-        // Storage keys for backwards compatibility
-        const STORAGE_KEYS = {
-            FOLDERS: 'fileContainer_folders',
-            FILES: 'fileContainer_files' // Will be migrated to chunked system
+        // File-based storage configuration
+        const FILE_CONFIG = {
+            DATA_PATH: './data/',
+            INDEX_FILE: 'index.json',
+            MAX_FILE_SIZE: 20 * 1024 * 1024, // 20MB
+            FILE_PREFIX: 'files-',
+            FILE_EXTENSION: '.json'
         };
 
         let currentFolder = '';
         let deleteItem = null;
+        let dataIndex = null;
+        let allDataFiles = [];
 
         // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
-            migrateToChunkedStorage();
-            initializeStorage();
-            loadFolders();
-            loadFileList();
-            setupDragAndDrop();
-            updateStorageInfo();
+            loadDataIndex()
+                .then(() => loadAllDataFiles())
+                .then(() => {
+                    loadFolders();
+                    loadFileList();
+                    setupDragAndDrop();
+                    updateStorageInfo();
+                })
+                .catch(error => {
+                    console.error('Initialization error:', error);
+                    showAlert('Error loading data: ' + error.message, 'error');
+                });
         });
 
-        // Migrate old localStorage to new chunked system
-        function migrateToChunkedStorage() {
-            const oldFiles = localStorage.getItem(STORAGE_KEYS.FILES);
-            if (oldFiles && !localStorage.getItem(STORAGE_CONFIG.META_KEY)) {
-                try {
-                    const filesData = JSON.parse(oldFiles);
-                    saveFilesDataChunked(filesData);
-                    localStorage.removeItem(STORAGE_KEYS.FILES);
-                    showAlert('Data berhasil dimigrasikan ke sistem storage baru!', 'success');
-                } catch (error) {
-                    console.error('Migration error:', error);
-                }
-            }
-        }
-
-        // Chunked storage management
-        function saveFilesDataChunked(filesData) {
+        // Load data index file
+        async function loadDataIndex() {
             try {
-                // Clear existing chunks
-                clearFileChunks();
-                
-                const jsonString = JSON.stringify(filesData);
-                const totalSize = new Blob([jsonString]).size;
-                
-                if (totalSize <= STORAGE_CONFIG.MAX_CHUNK_SIZE) {
-                    // Single chunk
-                    localStorage.setItem(STORAGE_CONFIG.CHUNK_PREFIX + '0', jsonString);
-                    saveMeta({ totalChunks: 1, totalSize, lastUpdate: Date.now() });
-                } else {
-                    // Multiple chunks
-                    const chunks = splitIntoChunks(filesData);
-                    chunks.forEach((chunk, index) => {
-                        localStorage.setItem(STORAGE_CONFIG.CHUNK_PREFIX + index, JSON.stringify(chunk));
-                    });
-                    saveMeta({ 
-                        totalChunks: chunks.length, 
-                        totalSize, 
-                        lastUpdate: Date.now(),
-                        splitMethod: 'by_files'
-                    });
+                const response = await fetch(FILE_CONFIG.DATA_PATH + FILE_CONFIG.INDEX_FILE);
+                if (!response.ok) {
+                    throw new Error('Index file not found');
                 }
-                
-                updateStorageInfo();
+                dataIndex = await response.json();
+                console.log('Data index loaded:', dataIndex);
             } catch (error) {
-                console.error('Error saving chunked data:', error);
-                showAlert('Error menyimpan data: ' + error.message, 'error');
-                
-                // Fallback: try to save what we can
-                try {
-                    const essentialData = filesData.slice(0, Math.floor(filesData.length / 2));
-                    saveFilesDataChunked(essentialData);
-                    showAlert('Data disimpan sebagian untuk menghindari overflow', 'warning');
-                } catch (fallbackError) {
-                    showAlert('Storage penuh! Silakan export dan clear data.', 'error');
-                }
+                console.error('Error loading data index:', error);
+                // Create default index if not exists
+                dataIndex = {
+                    version: "2.0",
+                    lastUpdate: new Date().toISOString(),
+                    dataFiles: [{
+                        filename: "files-001.json",
+                        fileNumber: 1,
+                        currentSize: 0,
+                        maxSize: FILE_CONFIG.MAX_FILE_SIZE,
+                        active: true,
+                        created: new Date().toISOString()
+                    }],
+                    totalDataFiles: 1,
+                    totalFolders: 0,
+                    totalFiles: 0,
+                    totalSizeBytes: 0
+                };
+                showAlert('⚠️ Mode offline: Menggunakan data lokal. Data tidak akan tersimpan permanen.', 'warning');
             }
         }
 
-        function splitIntoChunks(filesData) {
-            const chunks = [];
-            let currentChunk = [];
-            let currentSize = 0;
-            
-            for (const file of filesData) {
-                const fileSize = new Blob([JSON.stringify(file)]).size;
-                
-                if (currentSize + fileSize > STORAGE_CONFIG.MAX_CHUNK_SIZE && currentChunk.length > 0) {
-                    chunks.push(currentChunk);
-                    currentChunk = [file];
-                    currentSize = fileSize;
-                } else {
-                    currentChunk.push(file);
-                    currentSize += fileSize;
-                }
-            }
-            
-            if (currentChunk.length > 0) {
-                chunks.push(currentChunk);
-            }
-            
-            return chunks;
-        }
-
-        function loadFilesDataChunked() {
+        // Load all data files
+        async function loadAllDataFiles() {
             try {
-                const meta = getMeta();
-                if (!meta || meta.totalChunks === 0) {
-                    return [];
-                }
-                
-                let allFiles = [];
-                for (let i = 0; i < meta.totalChunks; i++) {
-                    const chunkData = localStorage.getItem(STORAGE_CONFIG.CHUNK_PREFIX + i);
-                    if (chunkData) {
-                        const chunk = JSON.parse(chunkData);
-                        if (Array.isArray(chunk)) {
-                            allFiles = allFiles.concat(chunk);
-                        } else {
-                            // Single chunk case
-                            allFiles = chunk;
-                            break;
+                allDataFiles = [];
+                for (const fileInfo of dataIndex.dataFiles) {
+                    try {
+                        const response = await fetch(FILE_CONFIG.DATA_PATH + fileInfo.filename);
+                        if (response.ok) {
+                            const data = await response.json();
+                            allDataFiles.push({
+                                info: fileInfo,
+                                data: data
+                            });
                         }
+                    } catch (error) {
+                        console.warn(`Could not load ${fileInfo.filename}:`, error);
                     }
                 }
-                
-                return allFiles;
+                console.log('Loaded data files:', allDataFiles.length);
             } catch (error) {
-                console.error('Error loading chunked data:', error);
-                return [];
+                console.error('Error loading data files:', error);
+                showAlert('Error loading data files: ' + error.message, 'error');
             }
         }
 
-        function clearFileChunks() {
-            const meta = getMeta();
-            if (meta && meta.totalChunks) {
-                for (let i = 0; i < meta.totalChunks; i++) {
-                    localStorage.removeItem(STORAGE_CONFIG.CHUNK_PREFIX + i);
-                }
-            }
-            
-            // Clear any orphaned chunks
-            for (let i = 0; i < 100; i++) { // Reasonable upper limit
-                const key = STORAGE_CONFIG.CHUNK_PREFIX + i;
-                if (localStorage.getItem(key)) {
-                    localStorage.removeItem(key);
-                } else {
-                    break;
-                }
-            }
-        }
-
-        function saveMeta(meta) {
-            localStorage.setItem(STORAGE_CONFIG.META_KEY, JSON.stringify(meta));
-        }
-
-        function getMeta() {
-            try {
-                const meta = localStorage.getItem(STORAGE_CONFIG.META_KEY);
-                return meta ? JSON.parse(meta) : null;
-            } catch (error) {
-                console.error('Error loading meta:', error);
-                return null;
-            }
-        }
-
-        // Initialize localStorage if empty
-        function initializeStorage() {
-            if (!localStorage.getItem(STORAGE_KEYS.FOLDERS)) {
-                localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify({}));
-            }
-            if (!getMeta()) {
-                saveMeta({ totalChunks: 0, totalSize: 0, lastUpdate: Date.now() });
-            }
-        }
-
-        // Storage management functions
+        // Get all folders from all data files
         function getFoldersData() {
-            try {
-                return JSON.parse(localStorage.getItem(STORAGE_KEYS.FOLDERS)) || {};
-            } catch (error) {
-                console.error('Error loading folders data:', error);
-                return {};
-            }
+            const allFolders = {};
+            allDataFiles.forEach(fileData => {
+                if (fileData.data.folders) {
+                    Object.assign(allFolders, fileData.data.folders);
+                }
+            });
+            return allFolders;
         }
 
-        function saveFoldersData(data) {
-            try {
-                localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data));
-                updateStorageInfo();
-            } catch (error) {
-                console.error('Error saving folders data:', error);
-                showAlert('Error menyimpan data folder: ' + error.message, 'error');
-            }
-        }
-
+        // Get all files from all data files
         function getFilesData() {
-            return loadFilesDataChunked();
+            const allFiles = [];
+            allDataFiles.forEach(fileData => {
+                if (fileData.data.files && Array.isArray(fileData.data.files)) {
+                    allFiles.push(...fileData.data.files);
+                }
+            });
+            return allFiles;
         }
 
-        function saveFilesData(data) {
-            saveFilesDataChunked(data);
+        // Save data to appropriate JSON file
+        async function saveData(newFolders = null, newFiles = null) {
+            try {
+                // In a real GitHub Pages environment, this would need a backend service
+                // For demo purposes, we'll show what the data would look like
+                
+                if (newFolders !== null) {
+                    // Update folders in the first data file
+                    if (allDataFiles.length > 0) {
+                        allDataFiles[0].data.folders = newFolders;
+                    }
+                }
+
+                if (newFiles !== null) {
+                    // Distribute files across data files based on size
+                    await distributeFilesAcrossDataFiles(newFiles);
+                }
+
+                // Update metadata
+                updateDataIndex();
+                updateStorageInfo();
+
+                showAlert('⚠️ Demo Mode: Data changes tidak tersimpan secara permanen. Dalam implementasi nyata, data akan disimpan ke file JSON di repository.', 'warning');
+                
+            } catch (error) {
+                console.error('Error saving data:', error);
+                showAlert('Error saving data: ' + error.message, 'error');
+            }
+        }
+
+        // Distribute files across multiple JSON files based on size
+        async function distributeFilesAcrossDataFiles(files) {
+            try {
+                // Clear existing files from all data files
+                allDataFiles.forEach(fileData => {
+                    fileData.data.files = [];
+                });
+
+                let currentFileIndex = 0;
+                let currentSize = JSON.stringify(allDataFiles[currentFileIndex]?.data || {}).length;
+
+                for (const file of files) {
+                    const fileSize = JSON.stringify(file).length;
+                    
+                    // Check if adding this file would exceed the limit
+                    if (currentSize + fileSize > FILE_CONFIG.MAX_FILE_SIZE && 
+                        allDataFiles[currentFileIndex]?.data.files.length > 0) {
+                        
+                        // Need a new data file
+                        currentFileIndex++;
+                        currentSize = 0;
+                        
+                        // Create new data file if doesn't exist
+                        if (currentFileIndex >= allDataFiles.length) {
+                            await createNewDataFile(currentFileIndex + 1);
+                        }
+                    }
+
+                    // Add file to current data file
+                    if (allDataFiles[currentFileIndex]) {
+                        allDataFiles[currentFileIndex].data.files.push(file);
+                        currentSize += fileSize;
+                        allDataFiles[currentFileIndex].info.currentSize = currentSize;
+                    }
+                }
+
+                console.log(`Files distributed across ${currentFileIndex + 1} data files`);
+                
+            } catch (error) {
+                console.error('Error distributing files:', error);
+                throw error;
+            }
+        }
+
+        // Create new data file when needed
+        async function createNewDataFile(fileNumber) {
+            try {
+                const filename = `${FILE_CONFIG.FILE_PREFIX}${fileNumber.toString().padStart(3, '0')}${FILE_CONFIG.FILE_EXTENSION}`;
+                
+                const newDataFile = {
+                    version: "2.0",
+                    metadata: {
+                        created: new Date().toISOString(),
+                        lastUpdate: new Date().toISOString(),
+                        fileNumber: fileNumber,
+                        totalFiles: dataIndex.totalDataFiles + 1,
+                        maxSizeBytes: FILE_CONFIG.MAX_FILE_SIZE,
+                        currentSizeBytes: 0
+                    },
+                    folders: {},
+                    files: []
+                };
+
+                const newFileInfo = {
+                    filename: filename,
+                    fileNumber: fileNumber,
+                    currentSize: 0,
+                    maxSize: FILE_CONFIG.MAX_FILE_SIZE,
+                    active: true,
+                    created: new Date().toISOString()
+                };
+
+                // Add to data index
+                dataIndex.dataFiles.push(newFileInfo);
+                dataIndex.totalDataFiles++;
+
+                // Add to loaded data files
+                allDataFiles.push({
+                    info: newFileInfo,
+                    data: newDataFile
+                });
+
+                console.log(`Created new data file: ${filename}`);
+                showAlert(`📄 File data baru dibuat: ${filename}`, 'success');
+
+            } catch (error) {
+                console.error('Error creating new data file:', error);
+                throw error;
+            }
+        }
+
+        // Update data index metadata
+        function updateDataIndex() {
+            if (!dataIndex) return;
+
+            const allFolders = getFoldersData();
+            const allFiles = getFilesData();
+            
+            dataIndex.lastUpdate = new Date().toISOString();
+            dataIndex.totalFolders = Object.keys(allFolders).length;
+            dataIndex.totalFiles = allFiles.length;
+            dataIndex.totalSizeBytes = JSON.stringify(allFiles).length;
+
+            // Update individual file sizes
+            allDataFiles.forEach((fileData, index) => {
+                if (dataIndex.dataFiles[index]) {
+                    dataIndex.dataFiles[index].currentSize = JSON.stringify(fileData.data).length;
+                }
+            });
         }
 
         // Simple hash function for password (client-side only)
@@ -689,179 +728,213 @@
 
         // Update storage info
         function updateStorageInfo() {
-            const foldersSize = JSON.stringify(getFoldersData()).length;
-            const meta = getMeta();
-            const filesSize = meta ? meta.totalSize : 0;
-            const totalSize = foldersSize + filesSize;
-            const totalSizeKB = (totalSize / 1024).toFixed(2);
-            const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(2);
+            if (!dataIndex) return;
+
+            const totalSizeBytes = dataIndex.totalSizeBytes || 0;
+            const totalSizeKB = (totalSizeBytes / 1024).toFixed(2);
+            const totalSizeMB = (totalSizeBytes / (1024 * 1024)).toFixed(2);
             
             document.getElementById('storageUsed').textContent = 
-                totalSize > 1024 * 1024 ? totalSizeMB + ' MB' : totalSizeKB + ' KB';
+                totalSizeBytes > 1024 * 1024 ? totalSizeMB + ' MB' : totalSizeKB + ' KB';
             
-            // Update chunk info
-            const chunkInfo = document.getElementById('chunkInfo');
+            document.getElementById('fileCount').textContent = dataIndex.totalDataFiles || 0;
+            
+            // Update storage details
             const storageDetails = document.getElementById('storageDetails');
+            const activeFiles = allDataFiles.filter(f => f.info.active).length;
             
-            if (meta && meta.totalChunks > 1) {
-                chunkInfo.textContent = ` (${meta.totalChunks} chunks)`;
-                chunkInfo.style.color = '#667eea';
-                storageDetails.innerHTML = 
-                    `📊 Data split menjadi ${meta.totalChunks} chunk • ` +
-                    `Avg chunk size: ${(totalSize / meta.totalChunks / 1024).toFixed(1)} KB • ` +
-                    `Last update: ${new Date(meta.lastUpdate).toLocaleString('id-ID')}`;
-            } else {
-                chunkInfo.textContent = '';
-                storageDetails.innerHTML = 
-                    `📊 Single chunk storage • ` +
-                    `Files: ${getFilesData().length} • ` +
-                    `Last update: ${meta ? new Date(meta.lastUpdate).toLocaleString('id-ID') : 'Unknown'}`;
-            }
+            storageDetails.innerHTML = 
+                `📊 ${dataIndex.totalFiles || 0} files dalam ${dataIndex.totalFolders || 0} folders • ` +
+                `${activeFiles} data files aktif • ` +
+                `Last update: ${dataIndex.lastUpdate ? new Date(dataIndex.lastUpdate).toLocaleString('id-ID') : 'Unknown'}`;
             
-            // Calculate percentage (25MB limit)
-            const estimatedLimit = 25 * 1024 * 1024; // 25MB in bytes
-            const percentage = Math.min((totalSize / estimatedLimit) * 100, 100);
+            // Calculate percentage (no strict limit for file-based storage)
+            const estimatedMaxSize = (dataIndex.totalDataFiles || 1) * FILE_CONFIG.MAX_FILE_SIZE;
+            const percentage = Math.min((totalSizeBytes / estimatedMaxSize) * 100, 100);
             document.getElementById('storageFill').style.width = percentage + '%';
             
-            // Update progress bar color based on usage
+            // Update progress bar color
             const progressBar = document.getElementById('storageFill');
             if (percentage > 90) {
                 progressBar.style.background = 'linear-gradient(135deg, #ff6b6b, #ee5a24)';
-                showAlert('⚠️ Storage hampir penuh (>90%)! Segera export dan clear data.', 'error');
             } else if (percentage > 75) {
                 progressBar.style.background = 'linear-gradient(135deg, #ffa726, #ff7043)';
-                if (Math.random() < 0.1) { // Show occasionally
-                    showAlert('⚠️ Storage usage tinggi (>75%). Pertimbangkan export data.', 'warning');
-                }
             } else {
                 progressBar.style.background = 'linear-gradient(135deg, #667eea, #764ba2)';
             }
         }
 
-        // Optimize storage by removing duplicates and compressing data
-        function optimizeStorage() {
+        // Refresh data files from repository
+        async function refreshDataFiles() {
             try {
-                const filesData = getFilesData();
-                const originalSize = JSON.stringify(filesData).length;
-                
-                // Remove duplicates based on name + folder + size
-                const uniqueFiles = [];
-                const seen = new Set();
-                
-                filesData.forEach(file => {
-                    const key = `${file.name}_${file.folder}_${file.size}`;
-                    if (!seen.has(key)) {
-                        seen.add(key);
-                        uniqueFiles.push(file);
-                    }
-                });
-                
-                // Remove corrupted entries
-                const cleanFiles = uniqueFiles.filter(file => 
-                    file.name && file.folder && file.base64Data && 
-                    file.base64Data.startsWith('data:')
-                );
-                
-                const newSize = JSON.stringify(cleanFiles).length;
-                const savedSize = originalSize - newSize;
-                
-                if (savedSize > 0) {
-                    saveFilesData(cleanFiles);
-                    loadFileList();
-                    showAlert(
-                        `✅ Storage dioptimasi! Hemat ${(savedSize / 1024).toFixed(1)} KB. ` +
-                        `Duplikat dihapus: ${filesData.length - cleanFiles.length} file.`, 
-                        'success'
-                    );
-                } else {
-                    showAlert('✅ Storage sudah optimal, tidak ada data redundant.', 'success');
-                }
-                
+                showAlert('🔄 Refreshing data files...', 'success');
+                await loadDataIndex();
+                await loadAllDataFiles();
+                loadFolders();
+                loadFileList();
+                updateStorageInfo();
+                showAlert('✅ Data files refreshed successfully!', 'success');
             } catch (error) {
-                showAlert('Error optimizing storage: ' + error.message, 'error');
+                showAlert('Error refreshing data: ' + error.message, 'error');
             }
         }
 
-        // Export data
-        function exportData() {
+        // Show data files list
+        function showDataFilesList() {
+            if (!dataIndex || !dataIndex.dataFiles) {
+                showAlert('No data files information available', 'error');
+                return;
+            }
+
+            let filesList = '📋 Data Files:\n\n';
+            dataIndex.dataFiles.forEach((file, index) => {
+                const sizeKB = (file.currentSize / 1024).toFixed(1);
+                const maxSizeKB = (file.maxSize / 1024).toFixed(0);
+                const percentage = ((file.currentSize / file.maxSize) * 100).toFixed(1);
+                
+                filesList += `${index + 1}. ${file.filename}\n`;
+                filesList += `   Size: ${sizeKB} KB / ${maxSizeKB} KB (${percentage}%)\n`;
+                filesList += `   Status: ${file.active ? '✅ Active' : '❌ Inactive'}\n`;
+                filesList += `   Created: ${new Date(file.created).toLocaleString('id-ID')}\n\n`;
+            });
+
+            alert(filesList);
+        }
+
+        // Load folders for dropdown
+        function loadFolders() {
+            const foldersData = getFoldersData();
+            const folders = Object.keys(foldersData);
+            const select = document.getElementById('targetFolder');
+            
+            select.innerHTML = '<option value="">Pilih folder...</option>';
+            folders.forEach(folder => {
+                select.innerHTML += `<option value="${folder}">${folder}</option>`;
+            });
+        }
+
+        // Create new folder
+        async function createFolder() {
+            const name = document.getElementById('folderName').value.trim();
+            const password = document.getElementById('folderPassword').value;
+
+            if (!name) {
+                showAlert('Nama folder tidak boleh kosong', 'error');
+                return;
+            }
+
+            if (!password) {
+                showAlert('Sandi keamanan harus diisi', 'error');
+                return;
+            }
+
+            const sanitizedName = name.replace(/[^a-zA-Z0-9\-_\s]/g, '').trim();
+            if (!sanitizedName) {
+                showAlert('Nama folder tidak valid', 'error');
+                return;
+            }
+
+            const foldersData = getFoldersData();
+            
+            if (foldersData[sanitizedName]) {
+                showAlert('Folder sudah ada', 'error');
+                return;
+            }
+
             try {
-                const meta = getMeta();
-                const data = {
-                    version: '2.0', // New version with chunked support
-                    folders: getFoldersData(),
-                    files: getFilesData(),
-                    meta: meta,
-                    exportDate: new Date().toISOString(),
-                    totalFiles: getFilesData().length,
-                    totalSize: meta ? meta.totalSize : 0
+                // Hash password
+                const hashedPassword = await hashPassword(password);
+                
+                // Create folder data
+                foldersData[sanitizedName] = {
+                    name: sanitizedName,
+                    password: hashedPassword,
+                    createdAt: new Date().toISOString()
                 };
                 
-                const dataStr = JSON.stringify(data, null, 2);
-                const dataSize = new Blob([dataStr]).size;
+                await saveData(foldersData, null);
                 
-                // Check if export file will be too large
-                if (dataSize > 25 * 1024 * 1024) {
-                    // Export in multiple files
-                    exportDataInChunks(data);
-                } else {
-                    // Single file export
-                    const dataBlob = new Blob([dataStr], {type: 'application/json'});
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(dataBlob);
-                    link.download = `file-container-backup-${new Date().toISOString().split('T')[0]}.json`;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
+                showAlert(`Folder "${sanitizedName}" berhasil dibuat!`, 'success');
+                document.getElementById('folderName').value = '';
+                document.getElementById('folderPassword').value = '';
+                loadFolders();
+                loadFileList();
+            } catch (error) {
+                showAlert('Error creating folder: ' + error.message, 'error');
+            }
+        }
+
+        // Upload files
+        async function uploadFiles() {
+            const files = document.getElementById('fileInput').files;
+            const targetFolder = document.getElementById('targetFolder').value;
+
+            if (files.length === 0 || !targetFolder) {
+                showAlert('Pilih file dan folder tujuan', 'error');
+                return;
+            }
+
+            try {
+                showAlert('Converting files...', 'success');
+                const filesData = getFilesData();
+                
+                for (let file of files) {
+                    const base64Data = await fileToBase64(file);
                     
-                    showAlert(
-                        `✅ Data berhasil di-export! Size: ${(dataSize / 1024 / 1024).toFixed(1)} MB`, 
-                        'success'
-                    );
+                    const fileInfo = {
+                        id: Date.now() + Math.random().toString(36).substr(2, 9),
+                        name: file.name,
+                        folder: targetFolder,
+                        size: file.size,
+                        mimetype: file.type,
+                        uploadDate: new Date().toISOString(),
+                        base64Data: base64Data
+                    };
+                    
+                    filesData.push(fileInfo);
                 }
+                
+                await saveData(null, filesData);
+                
+                showAlert(`${files.length} file berhasil diupload ke folder "${targetFolder}"!`, 'success');
+                document.getElementById('fileInput').value = '';
+                updateUploadButton();
+                loadFileList();
+            } catch (error) {
+                showAlert('Error uploading files: ' + error.message, 'error');
+            }
+        }
+
+        // Export all data
+        function exportAllData() {
+            try {
+                const exportData = {
+                    version: "2.0",
+                    exportDate: new Date().toISOString(),
+                    dataIndex: dataIndex,
+                    allFolders: getFoldersData(),
+                    allFiles: getFilesData(),
+                    dataFiles: allDataFiles.map(fileData => ({
+                        info: fileData.info,
+                        data: fileData.data
+                    }))
+                };
+                
+                const dataStr = JSON.stringify(exportData, null, 2);
+                const dataBlob = new Blob([dataStr], {type: 'application/json'});
+                
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(dataBlob);
+                link.download = `file-container-complete-backup-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                const sizeKB = (dataBlob.size / 1024).toFixed(1);
+                showAlert(`✅ Complete backup exported! Size: ${sizeKB} KB`, 'success');
                 
             } catch (error) {
                 showAlert('Error exporting data: ' + error.message, 'error');
-            }
-        }
-
-        function exportDataInChunks(data) {
-            try {
-                const filesPerChunk = Math.ceil(data.files.length / Math.ceil(data.files.length / 100)); // ~100 files per chunk
-                const chunks = [];
-                
-                for (let i = 0; i < data.files.length; i += filesPerChunk) {
-                    const chunkFiles = data.files.slice(i, i + filesPerChunk);
-                    const chunkData = {
-                        ...data,
-                        files: chunkFiles,
-                        chunkInfo: {
-                            chunkIndex: chunks.length,
-                            totalChunks: Math.ceil(data.files.length / filesPerChunk),
-                            filesInChunk: chunkFiles.length
-                        }
-                    };
-                    chunks.push(chunkData);
-                }
-                
-                // Export each chunk
-                chunks.forEach((chunk, index) => {
-                    const chunkStr = JSON.stringify(chunk, null, 2);
-                    const chunkBlob = new Blob([chunkStr], {type: 'application/json'});
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(chunkBlob);
-                    link.download = `file-container-backup-${new Date().toISOString().split('T')[0]}-part${index + 1}of${chunks.length}.json`;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                });
-                
-                showAlert(
-                    `✅ Data di-export dalam ${chunks.length} file! Import semua file untuk restore lengkap.`, 
-                    'success'
-                );
-                
-            } catch (error) {
-                showAlert('Error exporting chunked data: ' + error.message, 'error');
             }
         }
 
@@ -873,139 +946,108 @@
             const reader = new FileReader();
             reader.onload = function(e) {
                 try {
-                    const data = JSON.parse(e.target.result);
+                    const importedData = JSON.parse(e.target.result);
                     
-                    if (data.version === '2.0') {
-                        // New format with chunked support
-                        if (data.chunkInfo) {
-                            // This is a chunked export
-                            importChunkedData(data);
-                        } else {
-                            // Single file export
-                            importFullData(data);
+                    if (importedData.version === "2.0" && importedData.dataIndex) {
+                        // Complete backup format
+                        if (confirm('Import complete backup? This will replace all current data.')) {
+                            dataIndex = importedData.dataIndex;
+                            allDataFiles = importedData.dataFiles || [];
+                            
+                            loadFolders();
+                            loadFileList();
+                            updateStorageInfo();
+                            
+                            showAlert(`✅ Complete backup imported! ${importedData.allFiles?.length || 0} files restored.`, 'success');
                         }
-                    } else if (data.folders && data.files) {
-                        // Legacy format (v1.0)
-                        importLegacyData(data);
+                    } else if (importedData.folders && importedData.files) {
+                        // Legacy format
+                        if (confirm('Import legacy data? This will be merged with current data.')) {
+                            const currentFolders = getFoldersData();
+                            const currentFiles = getFilesData();
+                            
+                            const mergedFolders = { ...currentFolders, ...importedData.folders };
+                            const mergedFiles = [...currentFiles, ...importedData.files];
+                            
+                            saveData(mergedFolders, mergedFiles);
+                            
+                            showAlert('✅ Legacy data imported and merged!', 'success');
+                        }
                     } else {
-                        showAlert('Format file tidak valid!', 'error');
+                        showAlert('❌ Invalid file format!', 'error');
                     }
                 } catch (error) {
-                    showAlert('Error import data: ' + error.message, 'error');
+                    showAlert('Error importing data: ' + error.message, 'error');
                 }
             };
             reader.readAsText(file);
         }
 
-        function importFullData(data) {
-            try {
-                if (confirm('Import akan mengganti semua data yang ada. Lanjutkan?')) {
-                    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data.folders));
-                    saveFilesData(data.files);
-                    
-                    loadFolders();
-                    loadFileList();
-                    updateStorageInfo();
-                    
-                    showAlert(
-                        `✅ Data berhasil di-import! ${data.totalFiles} file dalam ${Object.keys(data.folders).length} folder.`, 
-                        'success'
-                    );
-                }
-            } catch (error) {
-                showAlert('Error importing full data: ' + error.message, 'error');
-            }
-        }
+        // Confirm delete
+        async function confirmDelete() {
+            if (!deleteItem) return;
 
-        function importChunkedData(chunkData) {
+            const password = document.getElementById('deletePassword').value;
+            if (!password) {
+                showAlert('Masukkan sandi folder', 'error');
+                return;
+            }
+
             try {
-                const chunkInfo = chunkData.chunkInfo;
-                const storageKey = `tempImport_${Date.now()}`;
-                
-                // Store chunk temporarily
-                const existingChunks = JSON.parse(localStorage.getItem(storageKey) || '[]');
-                existingChunks.push(chunkData);
-                localStorage.setItem(storageKey, JSON.stringify(existingChunks));
-                
-                if (existingChunks.length === chunkInfo.totalChunks) {
-                    // All chunks received, merge them
-                    const allFiles = [];
-                    let folders = {};
-                    
-                    existingChunks.forEach(chunk => {
-                        allFiles.push(...chunk.files);
-                        folders = { ...folders, ...chunk.folders };
-                    });
-                    
-                    if (confirm(`Semua ${chunkInfo.totalChunks} chunk telah di-upload. Import ${allFiles.length} file?`)) {
-                        localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(folders));
-                        saveFilesData(allFiles);
-                        
-                        loadFolders();
-                        loadFileList();
-                        updateStorageInfo();
-                        
-                        showAlert(
-                            `✅ Data chunked berhasil di-import! ${allFiles.length} file dari ${chunkInfo.totalChunks} chunk.`, 
-                            'success'
-                        );
+                const foldersData = getFoldersData();
+                const hashedPassword = await hashPassword(password);
+
+                if (deleteItem.type === 'folder') {
+                    // Delete folder
+                    if (!foldersData[deleteItem.name]) {
+                        showAlert('Folder tidak ditemukan', 'error');
+                        return;
                     }
                     
-                    // Cleanup temp storage
-                    localStorage.removeItem(storageKey);
-                } else {
-                    showAlert(
-                        `📥 Chunk ${existingChunks.length}/${chunkInfo.totalChunks} berhasil di-upload. Upload chunk berikutnya.`, 
-                        'success'
-                    );
-                }
-                
-            } catch (error) {
-                showAlert('Error importing chunked data: ' + error.message, 'error');
-            }
-        }
-
-        function importLegacyData(data) {
-            try {
-                if (confirm('Import data legacy format. Lanjutkan?')) {
-                    localStorage.setItem(STORAGE_KEYS.FOLDERS, JSON.stringify(data.folders));
-                    saveFilesData(data.files);
-                    
-                    loadFolders();
-                    loadFileList();
-                    updateStorageInfo();
-                    
-                    showAlert('✅ Data legacy berhasil di-import dan dikonversi!', 'success');
-                }
-            } catch (error) {
-                showAlert('Error importing legacy data: ' + error.message, 'error');
-            }
-        }
-
-        // Clear all data
-        function clearAllData() {
-            if (confirm('Apakah Anda yakin ingin menghapus SEMUA data? Tindakan ini tidak dapat dibatalkan!')) {
-                // Clear folders
-                localStorage.removeItem(STORAGE_KEYS.FOLDERS);
-                
-                // Clear file chunks
-                clearFileChunks();
-                localStorage.removeItem(STORAGE_CONFIG.META_KEY);
-                
-                // Clear any temporary import data
-                Object.keys(localStorage).forEach(key => {
-                    if (key.startsWith('tempImport_')) {
-                        localStorage.removeItem(key);
+                    // Verify password
+                    if (hashedPassword !== foldersData[deleteItem.name].password) {
+                        showAlert('Sandi salah', 'error');
+                        return;
                     }
-                });
+                    
+                    // Remove folder from data
+                    delete foldersData[deleteItem.name];
+                    
+                    // Remove all files in this folder
+                    const filesData = getFilesData();
+                    const updatedFilesData = filesData.filter(f => f.folder !== deleteItem.name);
+                    
+                    await saveData(foldersData, updatedFilesData);
+                    
+                    showAlert(`Folder "${deleteItem.name}" berhasil dihapus!`, 'success');
+                    loadFolders();
+                    
+                } else if (deleteItem.type === 'file') {
+                    // Delete file
+                    if (!foldersData[deleteItem.folder]) {
+                        showAlert('Folder tidak ditemukan', 'error');
+                        return;
+                    }
+                    
+                    // Verify password
+                    if (hashedPassword !== foldersData[deleteItem.folder].password) {
+                        showAlert('Sandi salah', 'error');
+                        return;
+                    }
+                    
+                    const filesData = getFilesData();
+                    const updatedFilesData = filesData.filter(f => f.id !== deleteItem.fileId);
+                    
+                    await saveData(null, updatedFilesData);
+                    
+                    showAlert(`File "${deleteItem.name}" berhasil dihapus!`, 'success');
+                }
                 
-                // Reinitialize
-                initializeStorage();
-                loadFolders();
+                closeDeleteModal();
                 loadFileList();
-                updateStorageInfo();
                 
-                showAlert('✅ Semua data berhasil dihapus!', 'success');
+            } catch (error) {
+                showAlert('Error deleting: ' + error.message, 'error');
             }
         }
 

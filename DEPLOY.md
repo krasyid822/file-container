@@ -3,36 +3,48 @@
 ## 📋 Prerequisites
 
 - Akun GitHub
-- Repository GitHub (public/private### Problem: Storage penuh sebelum 25MB
-**Solution**:
-```bash
-# Check untuk duplikat file
-Click "🔧 Optimize Storage" untuk cleanup otomatis
+- Repository GitHub (public/private## 📊 JSON File Storage Technology
 
-# Export data dan clear storage
-Click "📤 Export Data" → "🗑️ Clear All Data"
+### 🔧 Revolutionary Storage System
 
-# Import kembali jika diperlukan
-Click "📥 Import Data"
+File Container v3.0 menggunakan **JSON File Storage System**:
+
+- **Repository-based**: Data tersimpan sebagai file JSON di GitHub repository
+- **Auto-splitting**: File JSON otomatis dipecah ketika mencapai 20MB  
+- **Unlimited Capacity**: Tidak terbatas oleh browser storage limits
+- **Cross-device Sync**: Data tersedia di semua perangkat
+- **Version Control**: Semua perubahan ter-track oleh Git
+- **Global CDN**: Fast access melalui GitHub Pages worldwide
+
+### 💾 Storage Architecture
+
+```
+docs/data/
+├── index.json           # Master index of all data files
+├── files-001.json       # First data file (≤20MB)
+├── files-002.json       # Second data file (auto-created)
+├── files-003.json       # Third data file (auto-created)
+└── files-XXX.json       # Additional files as needed
 ```
 
-### Problem: Export file terlalu besar
-**Solution**:
-```bash
-# Sistem otomatis split export jika >25MB
-# Upload semua file part1of3.json, part2of3.json, dll
-# Import akan otomatis merge chunks
+### 🎯 Major Advantages
 
-# Manual split: Export per folder jika diperlukan
-```
+- ✅ **Unlimited Storage** - No browser storage limits (was ~25MB)
+- ✅ **Auto-Scaling** - Creates new JSON files automatically  
+- ✅ **Global Access** - Available worldwide via GitHub CDN
+- ✅ **Version History** - Git tracks all data changes
+- ✅ **Collaborative** - Multiple users can access same data
+- ✅ **Free Forever** - GitHub Pages hosting is completely free
+- ✅ **Cross-Platform** - Works on any device with browser
 
-### Problem: Chunk corruption
-**Solution**:
-```bash
-# Check browser console untuk error detail
-# Use "🔧 Optimize Storage" untuk cleanup
-# Fallback: Export → Clear → Import clean data
-```
+### ⚠️ Demo Mode Notice
+
+**Important**: Karena GitHub Pages adalah read-only, write operations saat ini dalam demo mode:
+
+- ✅ **Read Operations** - Load semua data dari JSON files
+- ✅ **UI Updates** - Perubahan tampil real-time di browser
+- ⚠️ **Write Operations** - Hanya simulasi (tidak persisten)
+- 💡 **Production Solution** - Butuh backend service atau GitHub API integration
 
 ## 📞 Supportikasi sudah di-push ke repository
 
