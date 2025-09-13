@@ -187,6 +187,33 @@
             flex-wrap: wrap;
         }
 
+        .media-preview {
+            margin: 10px 0;
+            text-align: center;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+
+        .media-preview img, .media-preview video {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .media-preview img:hover {
+            transform: scale(1.05);
+        }
+
+        .image-modal {
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
         .modal {
             display: none;
             position: fixed;
@@ -583,6 +610,15 @@
                 console.error('Error saving data:', error);
                 showAlert('Error saving data: ' + error.message, 'error');
             }
+        }
+
+        // Wrapper functions for backward compatibility
+        function saveFoldersData(foldersData) {
+            saveData(foldersData, null);
+        }
+
+        function saveFilesData(filesData) {
+            saveData(null, filesData);
         }
 
         // Distribute files across multiple JSON files based on size
@@ -1255,8 +1291,18 @@
             folderFiles.forEach(file => {
                 const fileDiv = document.createElement('div');
                 fileDiv.className = 'file-item';
+                
+                // Generate media preview if applicable
+                let mediaPreview = '';
+                if (isImageFile(file.name, file.mimetype)) {
+                    mediaPreview = createImagePreview(file);
+                } else if (isVideoFile(file.name, file.mimetype)) {
+                    mediaPreview = createVideoPreview(file);
+                }
+                
                 fileDiv.innerHTML = `
                     <div class="file-name">📄 ${file.name}</div>
+                    ${mediaPreview}
                     <div class="file-info">
                         Ukuran: ${formatFileSize(file.size)}<br>
                         Upload: ${new Date(file.uploadDate).toLocaleString('id-ID')}<br>
@@ -1401,6 +1447,80 @@
             setTimeout(() => {
                 alertDiv.remove();
             }, 5000);
+        }
+
+        // Media preview functions
+        function isImageFile(filename, mimetype) {
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
+            const imageMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/webp', 'image/svg+xml'];
+            
+            const extension = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+            return imageExtensions.includes(extension) || (mimetype && imageMimeTypes.includes(mimetype.toLowerCase()));
+        }
+
+        function isVideoFile(filename, mimetype) {
+            const videoExtensions = ['.mp4', '.webm', '.ogg', '.avi', '.mov', '.wmv', '.flv', '.mkv'];
+            const videoMimeTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/avi', 'video/quicktime', 'video/x-msvideo'];
+            
+            const extension = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+            return videoExtensions.includes(extension) || (mimetype && videoMimeTypes.includes(mimetype.toLowerCase()));
+        }
+
+        function createImagePreview(file) {
+            return `
+                <div class="media-preview">
+                    <img src="data:${file.mimetype};base64,${file.content}" 
+                         alt="${file.name}" 
+                         style="max-width: 200px; max-height: 150px; border-radius: 8px; cursor: pointer;"
+                         onclick="showFullImage('${file.id}', '${file.name}', '${file.mimetype}', '${file.content}')" />
+                </div>
+            `;
+        }
+
+        function createVideoPreview(file) {
+            return `
+                <div class="media-preview">
+                    <video controls style="max-width: 200px; max-height: 150px; border-radius: 8px;">
+                        <source src="data:${file.mimetype};base64,${file.content}" type="${file.mimetype}">
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+            `;
+        }
+
+        function showFullImage(fileId, fileName, mimetype, content) {
+            // Create modal for full image view
+            const modal = document.createElement('div');
+            modal.className = 'image-modal';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.9);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 1000;
+                cursor: pointer;
+            `;
+            
+            modal.innerHTML = `
+                <div style="max-width: 90%; max-height: 90%; text-align: center;">
+                    <img src="data:${mimetype};base64,${content}" 
+                         style="max-width: 100%; max-height: 100%; border-radius: 8px;" 
+                         alt="${fileName}" />
+                    <div style="color: white; margin-top: 10px; font-size: 16px;">${fileName}</div>
+                    <div style="color: #ccc; margin-top: 5px; font-size: 12px;">Click anywhere to close</div>
+                </div>
+            `;
+            
+            modal.onclick = function() {
+                document.body.removeChild(modal);
+            };
+            
+            document.body.appendChild(modal);
         }
 
         function formatFileSize(bytes) {

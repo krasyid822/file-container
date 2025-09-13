@@ -5,14 +5,14 @@
     {
       "filename": "files-001.json",
       "fileNumber": 1,
-      "currentSize": 0,
+      "currentSize": 15420,
       "maxSize": 20971520,
       "active": true,
       "created": "2025-09-13T00:00:00.000Z"
     }
   ],
   "totalDataFiles": 1,
-  "totalFolders": 0,
-  "totalFiles": 0,
-  "totalSizeBytes": 0
+  "totalFolders": 1,
+  "totalFiles": 3,
+  "totalSizeBytes": 15420
 }
