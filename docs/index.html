@@ -1605,15 +1605,64 @@ Current Token: ${tokenPreview}
         }
 
         // Load folders for dropdown
-        function loadFolders() {
-            const foldersData = getFoldersData();
-            const folders = Object.keys(foldersData);
-            const select = document.getElementById('targetFolder');
-            
-            select.innerHTML = '<option value="">Pilih folder...</option>';
-            folders.forEach(folder => {
-                select.innerHTML += `<option value="${folder}">${folder}</option>`;
-            });
+        async function loadFolders() {
+            try {
+                let foldersData = {};
+                
+                // Get folders data based on storage mode
+                if (storageMode === 'github' || storageMode === 'hybrid') {
+                    try {
+                        const githubFiles = await getGitHubFileList();
+                        const folderSet = new Set();
+                        githubFiles.forEach(file => {
+                            if (file.folder && !folderSet.has(file.folder)) {
+                                folderSet.add(file.folder);
+                                foldersData[file.folder] = {
+                                    createdAt: file.uploadDate || new Date().toISOString(),
+                                    password: '' // GitHub mode doesn't use folder passwords yet
+                                };
+                            }
+                        });
+                    } catch (error) {
+                        console.warn('Failed to load folders from GitHub:', error);
+                        if (storageMode === 'github') {
+                            throw error;
+                        }
+                    }
+                }
+                
+                if (storageMode === 'indexeddb' || storageMode === 'hybrid') {
+                    const localFoldersData = await getFoldersData();
+                    
+                    if (storageMode === 'hybrid') {
+                        // Merge with GitHub folders
+                        Object.keys(localFoldersData).forEach(folder => {
+                            if (!foldersData[folder]) {
+                                foldersData[folder] = localFoldersData[folder];
+                            }
+                        });
+                    } else {
+                        foldersData = localFoldersData;
+                    }
+                }
+                
+                const folders = Object.keys(foldersData);
+                const select = document.getElementById('targetFolder');
+                
+                if (select) {
+                    select.innerHTML = '<option value="">Pilih folder...</option>';
+                    folders.forEach(folder => {
+                        select.innerHTML += `<option value="${folder}">${folder}</option>`;
+                    });
+                }
+                
+            } catch (error) {
+                console.error('Error loading folders:', error);
+                const select = document.getElementById('targetFolder');
+                if (select) {
+                    select.innerHTML = '<option value="">Error loading folders</option>';
+                }
+            }
         }
 
         // Create new folder
@@ -1754,7 +1803,7 @@ Current Token: ${tokenPreview}
         }
 
         // Import data
-        function importData(event) {
+        async function importData(event) {
             const file = event.target.files[0];
             if (!file) return;
             
@@ -1769,9 +1818,9 @@ Current Token: ${tokenPreview}
                             dataIndex = importedData.dataIndex;
                             allDataFiles = importedData.dataFiles || [];
                             
-                            loadFolders();
-                            loadFileList();
-                            updateStorageInfo();
+                            await loadFolders();
+                            await loadFileList();
+                            await updateStorageInfo();
                             
                             showAlert(`✅ Complete backup imported! ${importedData.allFiles?.length || 0} files restored.`, 'success');
                         }
@@ -1835,7 +1884,7 @@ Current Token: ${tokenPreview}
                     await saveData(foldersData, updatedFilesData);
                     
                     showAlert(`Folder "${deleteItem.name}" berhasil dihapus!`, 'success');
-                    loadFolders();
+                    await loadFolders();
                     
                 } else if (deleteItem.type === 'file') {
                     // Delete file
@@ -1921,18 +1970,6 @@ Current Token: ${tokenPreview}
             }
         }
 
-        // Load folders for dropdown
-        function loadFolders() {
-            const foldersData = getFoldersData();
-            const folders = Object.keys(foldersData);
-            const select = document.getElementById('targetFolder');
-            
-            select.innerHTML = '<option value="">Pilih folder...</option>';
-            folders.forEach(folder => {
-                select.innerHTML += `<option value="${folder}">${folder}</option>`;
-            });
-        }
-
         // Create new folder
         async function createFolder() {
             const name = document.getElementById('folderName').value.trim();
@@ -1972,13 +2009,13 @@ Current Token: ${tokenPreview}
                     createdAt: new Date().toISOString()
                 };
                 
-                saveFoldersData(foldersData);
+                await saveFoldersData(foldersData);
                 
                 showAlert(`Folder "${sanitizedName}" berhasil dibuat!`, 'success');
                 document.getElementById('folderName').value = '';
                 document.getElementById('folderPassword').value = '';
-                loadFolders();
-                loadFileList();
+                await loadFolders();
+                await loadFileList();
             } catch (error) {
                 showAlert('Error creating folder: ' + error.message, 'error');
             }
@@ -2298,13 +2335,30 @@ Current Token: ${tokenPreview}
 
                 if (deleteItem.type === 'folder') {
                     // Delete folder
-                    if (!foldersData[deleteItem.name]) {
+                    let folderExists = false;
+                    let passwordValid = false;
+                    
+                    // Check if folder exists and verify password based on storage mode
+                    if (storageMode === 'github') {
+                        // For GitHub-only mode, skip password verification for now
+                        // (In future versions, we can store folder metadata in GitHub)
+                        const githubFiles = await getGitHubFileList();
+                        folderExists = githubFiles.some(f => f.folder === deleteItem.name);
+                        passwordValid = true; // Skip password for GitHub-only mode
+                    } else {
+                        // For IndexedDB or hybrid mode, use stored folder data
+                        folderExists = !!foldersData[deleteItem.name];
+                        if (folderExists) {
+                            passwordValid = hashedPassword === foldersData[deleteItem.name].password;
+                        }
+                    }
+                    
+                    if (!folderExists) {
                         showAlert('Folder tidak ditemukan', 'error');
                         return;
                     }
                     
-                    // Verify password (skip for GitHub-only mode for now)
-                    if (storageMode !== 'github' && hashedPassword !== foldersData[deleteItem.name].password) {
+                    if (!passwordValid) {
                         showAlert('Sandi salah', 'error');
                         return;
                     }
@@ -2343,13 +2397,28 @@ Current Token: ${tokenPreview}
                     
                 } else if (deleteItem.type === 'file') {
                     // Delete file
-                    if (storageMode !== 'github' && !foldersData[deleteItem.folder]) {
+                    let folderExists = false;
+                    let passwordValid = false;
+                    
+                    // Check folder and password based on storage mode
+                    if (storageMode === 'github') {
+                        // For GitHub-only mode, skip folder password verification
+                        folderExists = true; // Assume file exists if we got here
+                        passwordValid = true; // Skip password for GitHub-only mode
+                    } else {
+                        // For IndexedDB or hybrid mode, verify folder and password
+                        folderExists = !!foldersData[deleteItem.folder];
+                        if (folderExists) {
+                            passwordValid = hashedPassword === foldersData[deleteItem.folder].password;
+                        }
+                    }
+                    
+                    if (!folderExists) {
                         showAlert('Folder tidak ditemukan', 'error');
                         return;
                     }
                     
-                    // Verify password (skip for GitHub-only mode for now)
-                    if (storageMode !== 'github' && hashedPassword !== foldersData[deleteItem.folder].password) {
+                    if (!passwordValid) {
                         showAlert('Sandi salah', 'error');
                         return;
                     }
