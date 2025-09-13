@@ -71,3 +71,6 @@ jspm_packages/
 
 # Yarn Integrity file
 .yarn-integrity
+
+# Token files
+.token-api.txt
