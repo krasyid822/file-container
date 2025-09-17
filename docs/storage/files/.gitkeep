@@ -6,4 +6,4 @@ Files are stored as JSON with the following structure:
 - Metadata: File info, upload date, folder, etc.
 - Data: Base64 encoded content (chunked if >20MB)
 
-Created: 2025-09-17T17:21:48.312Z
+Created: 2025-09-17T17:22:24.086Z
