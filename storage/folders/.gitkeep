@@ -1,0 +1,11 @@
+# Folders Directory
+
+This directory contains folder configurations and metadata.
+
+Each folder is stored as JSON with:
+- Folder name and ID
+- Password hash (if protected)
+- Creation date
+- Metadata
+
+Created: 2025-09-18T11:24:50.051Z
