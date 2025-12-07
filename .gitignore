@@ -74,3 +74,5 @@ jspm_packages/
 
 # Token files
 .token-api.txt
+# Storage chunks (large files)
+storage/chunks/
